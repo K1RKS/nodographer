@@ -76,6 +76,9 @@
 
 	<script src="js/meshmap-userLocation.js"></script>
 
+	<script src="js/meshmap-local-tiles.js"></script>
+	<script src="js/meshmap-session.js"></script>
+
 </head>
 <body>
 <div id="map"><div id='spiderfyActive'>SPIDERFY ACTIVE</div></div>
@@ -110,8 +113,7 @@ var superNodeStations, superNodeLinks, superNodes;
 var RFLinksTxRate, RFLinksExpected, RFLinksSnR, RFLinksCost, RFLinksQual;
 var allStations, groupedOverlays;
 
-fetch('data/map_data.json')
-  .then(response => response.json())
+loadMapDataWithLocalTileOverrides()
   .then(data => {
     mapInfo = data.mapInfo;
     pollingInfo = data.pollingInfo;
@@ -128,7 +130,10 @@ function initializeMap() {
 	const tileEntries = Object.entries(mapInfo['mapTileServers'] || {});
 	const tileOrder = tileEntries.map(([k]) => k);
 	const preferredDefault = mapInfo['defaultTileServer'];
-	let defaultKey = preferredDefault && (preferredDefault in mapInfo['mapTileServers']) ? preferredDefault : null;
+	// Session tileserver (tab session) beats configured default on refresh
+	let defaultKey = (window.MeshmapSession
+		? MeshmapSession.resolveBaseLayerName(tileOrder, preferredDefault)
+		: (preferredDefault && (preferredDefault in mapInfo['mapTileServers']) ? preferredDefault : null));
 
 	for (const [k, v] of tileEntries) {
 		// Prefer mesh-local tiles when both page and tile hostnames are on .local.mesh
@@ -136,11 +141,6 @@ function initializeMap() {
 		baseLayers[k] = layer;
 
 		if (!defaultKey) {
-			defaultKey = k;
-		}
-		if (preferredDefault && k === preferredDefault) {
-			defaultKey = k;
-		} else if (!preferredDefault && v.includes('.local.mesh') && window.location.hostname.includes('.local.mesh')) {
 			defaultKey = k;
 		}
 
@@ -156,6 +156,9 @@ function initializeMap() {
 		const fallbackKey = tileOrder.length ? tileOrder[0] : null;
 		defaultMap = fallbackKey ? baseLayers[fallbackKey] : null;
 		defaultMapName = fallbackKey || "";
+	}
+	if (defaultMapName && window.MeshmapSession) {
+		MeshmapSession.write({ baseLayer: defaultMapName });
 	}
 
 	// Monitor tile errors on the current base layer and fallback by priority
@@ -409,17 +412,24 @@ groupedOverlays = {
 	}
 };
 
+const __meshmapView = (window.MeshmapSession
+	? MeshmapSession.resolveInitialView(mapInfo)
+	: { center: mapInfo['mapCenterCoords'], zoom: mapInfo['mapInitialZoom'], source: 'config' });
+
 map = L.map('map', {
-	center: mapInfo['mapCenterCoords'],
-	zoom: mapInfo['mapInitialZoom'],
+	center: __meshmapView.center,
+	zoom: __meshmapView.zoom,
 	minZoom: 0,
 	maxZoom: 18,
 	layers: [defaultMap, band2, band3, band5, band900, noRF, superNodes, RFLinksTxRate]
 });
 
 
-//map hash (refresh at the same center co-ords you were on)
+//map hash (shareable URL view). If a hash is present it wins after init; otherwise session view applies.
 hash = new L.Hash(map);
+if (__meshmapView.source === 'session' && window.MeshmapSession && !MeshmapSession.hasUrlHashView()) {
+	try { hash.onMapMove(); } catch (e) {}
+}
 
 //Legend
 legend.addTo(map);
@@ -508,6 +518,18 @@ layerControls = L.control.groupedLayers(baseLayers, groupedOverlays, {exclusiveG
 //layerControls.addTo(map);
 L.DomEvent.disableClickPropagation(layerControls._container);
 L.DomEvent.disableScrollPropagation(layerControls._container);
+
+// Persist tileserver + view + overlays for this browser tab session
+if (window.MeshmapSession) {
+	const overlayLayersByName = {};
+	Object.values(groupedOverlays).forEach(group => {
+		Object.entries(group).forEach(([name, layer]) => { overlayLayersByName[name] = layer; });
+	});
+	const overlayNameByLayer = new Map();
+	Object.entries(overlayLayersByName).forEach(([name, layer]) => overlayNameByLayer.set(layer, name));
+	MeshmapSession.restoreOverlays(map, overlayLayersByName);
+	MeshmapSession.bindMapSession(map, baseLayers, overlayNameByLayer);
+}
 
 // Add "Tile Servers" header to the layer control
 const baseLayersLabel = document.createElement('div');

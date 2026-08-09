@@ -1,0 +1,14 @@
+{
+  "replace": false,
+  "mapTileServers": {
+    "inet.Street": "//{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    "inet.Topographic": "//{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    "aredn.LOCAL": "//YOUR-TILESERVER.local.mesh/hot/{z}/{x}/{y}.png"
+  },
+  "priority": [
+    "aredn.LOCAL",
+    "inet.Street",
+    "inet.Topographic"
+  ],
+  "defaultTileServer": "inet.Street"
+}
