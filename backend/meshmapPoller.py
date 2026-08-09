@@ -1048,13 +1048,27 @@ class MeshPollingDaemon:
     async def _daemon_loop(self):
         """Main daemon loop"""
         while self.running and not self.shutdown_event.is_set():
+            cycle_started = time.time()
             try:
                 # Run poll cycle
                 await self._poll_cycle()
                     
             except Exception as e:
                 self.logger.error(f"Error in poll cycle: {e}", exc_info=True)
-                await asyncio.sleep(60)  # Wait before retry
+
+            # Always wait out the configured cycle window between attempts.
+            # Without this, topology fetch failures return immediately and the
+            # daemon busy-loops (hundreds of cycles/sec).
+            elapsed = time.time() - cycle_started
+            remaining = max(self.poller_cycle_seconds - elapsed, 5)
+            self.logger.info(
+                f"Waiting {remaining:.0f}s before next poll cycle "
+                f"(pollerCycleTime={self.poller_cycle_minutes} min)"
+            )
+            try:
+                await asyncio.wait_for(self.shutdown_event.wait(), timeout=remaining)
+            except asyncio.TimeoutError:
+                pass
     
     async def _poll_cycle(self):
         """Execute one complete polling cycle"""
