@@ -75,6 +75,7 @@
 	<script src="js/meshmap-linkFunctions.js"></script>
 
 	<script src="js/meshmap-userLocation.js"></script>
+	<script src="js/meshmap-freshness.js"></script>
 
 	<script src="js/meshmap-local-tiles.js"></script>
 	<script src="js/meshmap-session.js"></script>
@@ -612,6 +613,11 @@ attributionCtrl.setPrefix('');
 attributionCtrl.addAttribution(MeshMapDetails);
 
 createDeviceMarkers(allDevices);
+
+// Newest node last_seen — backend freshness indicator
+if (window.MeshmapFreshness) {
+	MeshmapFreshness.addToMap(map, allDevices);
+}
 
 //change link lines based on different metrics
 //i am sure there is a much better way to do this
