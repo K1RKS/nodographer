@@ -204,10 +204,29 @@ sudo journalctl -u meshmapPoller.service -p err       # Errors only
 
 ### Upgrades
 
+On an existing install under `/srv/meshmap` (or any git checkout of this repo):
+
+```bash
+cd /srv/meshmap
+sudo ./update.sh
+```
+
+Optional:
+
+```bash
+sudo BRANCH=main ./update.sh          # switch branch then ff-only pull
+sudo INSTALL_DIR=/srv/meshmap ./update.sh
+sudo ./update.sh --force              # allow dirty working tree
+```
+
+`update.sh` stops `meshmapPoller`, fast-forward pulls git, refreshes `backend/venv` requirements, fixes ownership, reloads systemd, and starts the service again. Local JSON under `frontend/data/` is left alone (gitignored).
+
+Manual equivalent:
+
 ```bash
 cd /srv/meshmap
 sudo systemctl stop meshmapPoller.service
-git pull
+git pull --ff-only
 cd backend && source venv/bin/activate && pip install -r requirements.txt
 sudo systemctl start meshmapPoller.service
 ```

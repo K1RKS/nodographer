@@ -4,3 +4,6 @@ frontend/data/node_report_data.json
 
 # Python virtual environment
 backend/venv/
+
+# Local plan/report twins and demo assets (not shipped with the app)
+reports/
