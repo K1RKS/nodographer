@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mobile and tablet map UX — Nodographer</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --bg-elev: #182029;
+      --ink: #e8eef4;
+      --muted: #9aa8b5;
+      --line: #2a3642;
+      --accent: #3d9b8f;
+      --accent-dim: #2a6f66;
+      --warn: #c4a35a;
+      --code-bg: #12181f;
+      --figure-bg: #12181f;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+      background:
+        radial-gradient(ellipse 70% 45% at 90% -5%, #1a3340 0%, transparent 50%),
+        radial-gradient(ellipse 50% 40% at 0% 100%, #1a2830 0%, transparent 45%),
+        var(--bg);
+      color: var(--ink);
+      line-height: 1.55;
+    }
+    .wrap {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+    header {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+    .eyebrow {
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin: 0 0 0.5rem;
+    }
+    h1 {
+      font-size: clamp(1.5rem, 3vw, 2rem);
+      letter-spacing: -0.02em;
+      margin: 0 0 0.6rem;
+      font-weight: 650;
+    }
+    h2 {
+      font-size: 1.2rem;
+      margin: 2.25rem 0 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--line);
+      color: var(--ink);
+    }
+    h3 {
+      font-size: 1.02rem;
+      margin: 1.4rem 0 0.5rem;
+      color: var(--ink);
+    }
+    p, li { max-width: 72ch; }
+    .lede { color: var(--muted); font-size: 1.05rem; max-width: 62ch; }
+    a { color: #7ec8bc; }
+    a:hover { color: #a8e0d6; }
+    .pills { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 1rem 0 0; }
+    .pill {
+      font-size: 0.78rem;
+      border: 1px solid var(--line);
+      background: var(--bg-elev);
+      padding: 0.2rem 0.55rem;
+      border-radius: 4px;
+      color: var(--muted);
+    }
+    .pill.accent { color: var(--accent); border-color: var(--accent-dim); }
+    .pill.warn { color: var(--warn); border-color: #6a5a30; }
+    nav.toc {
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      padding: 0.9rem 1rem;
+      margin: 1.25rem 0 1.5rem;
+      font-size: 0.92rem;
+      border-radius: 6px;
+    }
+    nav.toc strong { display: block; margin-bottom: 0.4rem; }
+    nav.toc ol { margin: 0; padding-left: 1.2rem; }
+    nav.toc a { text-decoration: none; }
+    nav.toc a:hover { text-decoration: underline; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      font-size: 0.88rem;
+      margin: 0.75rem 0 1rem;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 0.55rem 0.65rem;
+      border-bottom: 1px solid var(--line);
+    }
+    th { background: #1e2933; font-weight: 600; }
+    tr:last-child td { border-bottom: none; }
+    code, .mono {
+      font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+      font-size: 0.86em;
+      background: var(--code-bg);
+      padding: 0.08em 0.35em;
+      border-radius: 3px;
+      border: 1px solid var(--line);
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      padding: 0.85rem 1rem;
+      overflow-x: auto;
+      border-radius: 6px;
+      font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }
+    ul.check { list-style: none; padding-left: 0; }
+    ul.check li {
+      position: relative;
+      padding-left: 1.4rem;
+      margin: 0.35rem 0;
+    }
+    ul.check li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.45em;
+      width: 0.65em;
+      height: 0.65em;
+      border: 1.5px solid var(--accent);
+      border-radius: 2px;
+    }
+    .figure {
+      margin: 1rem 0 1.5rem;
+      background: var(--figure-bg);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0.75rem;
+    }
+    .figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 4px;
+      background: #0a0e12;
+    }
+    .figure.portrait img { max-width: 420px; margin: 0 auto; }
+    .figure figcaption {
+      margin-top: 0.65rem;
+      font-size: 0.88rem;
+      color: var(--muted);
+    }
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    @media (max-width: 720px) {
+      .compare { grid-template-columns: 1fr; }
+    }
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      align-items: center;
+      margin: 1rem 0;
+      font-size: 0.88rem;
+    }
+    .flow span {
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      padding: 0.35rem 0.55rem;
+      border-radius: 4px;
+    }
+    .flow .arrow { border: none; background: transparent; color: var(--accent); padding: 0 0.1rem; }
+    .note {
+      border-left: 3px solid var(--accent-dim);
+      padding: 0.55rem 0.85rem;
+      background: var(--bg-elev);
+      color: var(--muted);
+      margin: 1rem 0;
+      font-size: 0.92rem;
+    }
+    footer {
+      margin-top: 2.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <p class="eyebrow">Nodographer · branch mobile-experience</p>
+      <h1>Mobile and tablet map UX plan</h1>
+      <p class="lede">
+        Make the mesh map usable on phones and tablets: fix viewport and gestures,
+        enlarge hard-to-hit controls, and shrink menus that dominate small screens—
+        without a full bottom-sheet redesign.
+      </p>
+      <div class="pills">
+        <span class="pill accent">Balanced MVP</span>
+        <span class="pill">Leaflet full-screen map</span>
+        <span class="pill">~/ai_projects/nodographer</span>
+        <span class="pill warn">Commit to GitHub only after confirm</span>
+      </div>
+    </header>
+
+    <nav class="toc" aria-label="Table of contents">
+      <strong>Contents</strong>
+      <ol>
+        <li><a href="#visuals">Visual expectations</a></li>
+        <li><a href="#twin-convention">HTML twin convention</a></li>
+        <li><a href="#context">Context</a></li>
+        <li><a href="#phase1">Phase 1 — Foundation</a></li>
+        <li><a href="#phase2">Phase 2 — Touch targets</a></li>
+        <li><a href="#phase3">Phase 3 — Layers &amp; legend</a></li>
+        <li><a href="#phase4">Phase 4 — Search &amp; popups</a></li>
+        <li><a href="#phase5">Phase 5 — Verification</a></li>
+        <li><a href="#out-of-scope">Out of scope</a></li>
+        <li><a href="#impl-notes">Implementation notes</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="visuals">Visual expectations (demo mockups)</h2>
+    <p>Illustrative targets for the MVP (not pixel-perfect UI chrome). Assets live in <code>reports/assets/</code>.</p>
+
+    <h3>Portrait — problem vs goal</h3>
+    <div class="compare">
+      <figure class="figure portrait">
+        <img src="assets/mobile-ux-before-portrait.png" alt="Before: crowded tiny controls and oversized layer panel on a phone" />
+        <figcaption><strong>Before:</strong> tiny 30px control tower, tall unscrollable layers panel, open legend eating the map.</figcaption>
+      </figure>
+      <figure class="figure portrait">
+        <img src="assets/mobile-ux-after-portrait.png" alt="After: larger touch controls and compact chrome on a phone" />
+        <figcaption><strong>After:</strong> 44px primary controls (zoom / search / layers), secondary tools behind More, capped scrollable layers, legend as a chip.</figcaption>
+      </figure>
+    </div>
+
+    <h3>Gestures — pinch the map, not the page</h3>
+    <p>Viewport + <code>touch-action</code> / overscroll so two-finger pinch zooms Leaflet tiles instead of scaling the whole browser UI.</p>
+    <figure class="figure">
+      <img src="assets/mobile-ux-pinch-gestures.png" alt="Diagram contrasting map pinch zoom versus unwanted page zoom" />
+      <figcaption>Left: pinch zooms the map. Right: avoid browser page zoom fighting Leaflet.</figcaption>
+    </figure>
+
+    <h3>Landscape / rotation</h3>
+    <p>After rotate: <code>invalidateSize</code>, safe-area insets, collapsed legend chip, layers as a side card that does not cover full height.</p>
+    <figure class="figure">
+      <img src="assets/mobile-ux-landscape.png" alt="Landscape phone and tablet with compact controls and safe areas" />
+      <figcaption>Landscape layout with safe areas and compact panels.</figcaption>
+    </figure>
+
+    <h2 id="twin-convention">HTML twin convention</h2>
+    <p>This file is the standalone browser twin for the mobile UX plan. Use the same pattern for future reports in this repo.</p>
+    <table>
+      <thead>
+        <tr><th>Artifact</th><th>Twin</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Plan / report / audit named <code>foo-bar</code></td><td><code>reports/foo-bar.html</code></td></tr>
+        <tr><td>Demo / diagram images</td><td><code>reports/assets/</code> (kebab filenames)</td></tr>
+        <tr><td>Cursor canvas <code>*.canvas.tsx</code> (if used)</td><td>Same kebab basename under <code>reports/*.html</code></td></tr>
+      </tbody>
+    </table>
+    <ul>
+      <li>Write or update the twin in the <strong>same turn</strong> as the source plan/report.</li>
+      <li>Self-contained HTML (inline CSS/JS); images may live under <code>reports/assets/</code>.</li>
+      <li>Do not put twins inside managed canvas directories.</li>
+    </ul>
+
+    <h2 id="context">Context</h2>
+    <p>The map UI in <code>frontend/index.html</code> is desktop-first today:</p>
+    <ul>
+      <li>No viewport meta (unlike <code>frontend/node_report/index.html</code>)</li>
+      <li>Five controls stack on one left corner (zoom, search, ruler, list, layers)</li>
+      <li>Custom controls forced to <strong>30×30</strong> in <code>frontend/css/meshmap-default.css</code></li>
+      <li>Expanded layer panel fixed at <strong>500×140</strong> with <code>overflow: hidden</code></li>
+      <li>Popups forced to <strong>350px</strong> wide / <strong>250px</strong> min height</li>
+      <li>Legend defaults open at <strong>200×120</strong> top-right (<code>frontend/js/meshmap-legend.js</code>)</li>
+      <li>No <code>invalidateSize</code> on rotate/resize; <code>#map</code> uses bare <code>100vh</code></li>
+    </ul>
+    <div class="note">
+      <strong>Approach:</strong> balanced MVP — viewport + gesture fixes + touch-sized controls +
+      compact collapsible panels via CSS/<code>@media</code> and small JS. Defer full bottom-sheet
+      redesign and node-report DataTables overhaul.
+    </div>
+    <p>Implementation flow:</p>
+    <div class="flow" aria-label="Implementation sequence">
+      <span>Viewport + 100dvh + safe-area</span><span class="arrow">→</span>
+      <span>Map pinch vs page zoom</span><span class="arrow">→</span>
+      <span>Orientation invalidateSize</span><span class="arrow">→</span>
+      <span>44px controls + declutter</span><span class="arrow">→</span>
+      <span>Capped layers + collapsed legend</span><span class="arrow">→</span>
+      <span>Responsive popups + search</span>
+    </div>
+
+    <h2 id="phase1">Phase 1 — Foundation (gestures, rotation, layout)</h2>
+    <p><strong>Files:</strong> <code>frontend/index.html</code>, <code>frontend/css/meshmap-default.css</code></p>
+    <ol>
+      <li>Add viewport meta with safe-area support:
+        <code>width=device-width, initial-scale=1, viewport-fit=cover</code>.
+        Do <strong>not</strong> lock <code>user-scalable=no</code> (a11y).</li>
+      <li>Map fills visible viewport:
+        <code>html, body, #map { height: 100%; height: 100dvh; overflow: hidden; }</code>
+        plus <code>overscroll-behavior: none</code>.</li>
+      <li>Safe-area padding for Leaflet corners (notch / home indicator).</li>
+      <li>Fix missing vertical-center corner CSS (keep left stack mid/safe with larger targets).</li>
+      <li>On <code>resize</code>, <code>orientationchange</code>, and <code>visualViewport</code> resize:
+        debounce <code>map.invalidateSize({ animate: false })</code>.</li>
+      <li>Map vs page pinch: Leaflet container <code>touch-action: none</code>;
+        scrollable chrome uses <code>touch-action: pan-y</code> + <code>overscroll-behavior: contain</code>.</li>
+      <li><code>touch-action: manipulation</code> on control buttons to reduce double-tap zoom on chrome.</li>
+    </ol>
+
+    <h2 id="phase2">Phase 2 — Touch targets and control declutter</h2>
+    <p><strong>Files:</strong> <code>frontend/css/meshmap-default.css</code>, <code>frontend/index.html</code></p>
+    <p>User report: menus <strong>too small</strong> in some places, <strong>too large</strong> in others.</p>
+    <ol>
+      <li>Under <code>@media (pointer: coarse), (max-width: 900px)</code>: raise custom controls from 30×30 to
+        <strong>min 44×44</strong> (ruler, layers toggle, view-as-list, search); match Leaflet touch zoom sizing.</li>
+      <li>On narrow screens (<code>max-width: 700px</code>): keep zoom, search, layers visible;
+        move ruler and view-as-list into a compact “More” control.</li>
+      <li>Hide or shrink scale on very small widths; keep attribution readable with max-width wrap.</li>
+      <li>Spiderfy banner: center with <code>transform: translateX(-50%)</code>; shrink font on phones.</li>
+    </ol>
+
+    <h2 id="phase3">Phase 3 — Menus that eat the screen (layers + legend)</h2>
+    <p><strong>Files:</strong> <code>frontend/css/meshmap-default.css</code>, <code>frontend/js/meshmap-legend.js</code>, small hook in <code>frontend/index.html</code></p>
+    <ol>
+      <li><strong>Layer control:</strong> replace fixed <code>height: 500px !important; overflow: hidden</code> with
+        expanded <code>max-height: min(50dvh, 360px); max-width: min(90vw, 280px); overflow-y: auto;</code>,
+        larger labels / <code>font-size: 16px</code>, auto-collapse after selection or outside tap on coarse pointers.</li>
+      <li><strong>Legend:</strong> on narrow/coarse, start collapsed (“Show Legend” chip);
+        cap expanded width; larger Hide/Show; keep Dark reachable.</li>
+    </ol>
+
+    <h2 id="phase4">Phase 4 — Search and popups on small screens</h2>
+    <p><strong>Files:</strong> <code>frontend/css/meshmap-default.css</code>, <code>frontend/js/meshmap-markerFunctions.js</code>, <code>frontend/index.html</code></p>
+    <ol>
+      <li>Search: near full-bleed when open; results <code>max-height: ~40vh</code>; input <code>font-size: 16px</code>.</li>
+      <li>Popups: drop fixed 350px width → <code>max-width: min(350px, calc(100vw - 32px))</code>;
+        reduce tab min-height; allow scroll; fix <code>maxWidth</code> (currently <code>maxwidth</code>);
+        increase auto-pan padding for controls/safe areas.</li>
+      <li>Optional: stop popup tab hash links from fighting <code>leaflet-hash</code>.</li>
+    </ol>
+
+    <h2 id="phase5">Phase 5 — Verification</h2>
+    <p>Manual checks on phone + tablet (portrait and landscape):</p>
+    <ul class="check">
+      <li>Pinch-zooms the <strong>map</strong>, not the whole page</li>
+      <li>Rotate keeps map sized correctly (no grey gaps / clipped controls)</li>
+      <li>Layer menu scrolls and does not cover most of the screen</li>
+      <li>Controls are easy to hit; collapsed chrome leaves most of the map visible</li>
+      <li>Node popup fits and can be closed; search usable with on-screen keyboard</li>
+      <li>Desktop layout remains essentially unchanged (media queries / coarse-pointer gated)</li>
+    </ul>
+
+    <h2 id="out-of-scope">Explicitly out of scope for this pass</h2>
+    <ul>
+      <li>Full mobile bottom-sheet / Material-style redesign</li>
+      <li>Reworking <code>frontend/node_report/index.html</code> DataTables (<code>responsive: false</code>, wide columns) — follow-up</li>
+      <li>Enabling unused elevation plugin or geolocation</li>
+    </ul>
+
+    <h2 id="impl-notes">Implementation notes</h2>
+    <ul>
+      <li>Prefer a small helper (e.g. <code>frontend/js/meshmap-mobile.js</code>) for <code>invalidateSize</code>,
+        layer auto-collapse, and mobile-default legend collapse; CSS in <code>meshmap-default.css</code>.</li>
+      <li>Work on branch <code>mobile-experience</code>; commit/push to <code>K1RKS/nodographer</code> only after confirm.</li>
+      <li>Keep this HTML twin in sync when the plan scope changes.</li>
+    </ul>
+
+    <footer>
+      Digital twin of the Cursor plan “Mobile tablet UX” ·
+      open via <code>reports/mobile-tablet-ux.html</code> ·
+      mockups in <code>reports/assets/mobile-ux-*.png</code>
+    </footer>
+  </div>
+</body>
+</html>
