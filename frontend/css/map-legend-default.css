@@ -9,27 +9,31 @@
 #legendLinkButton {
 	background: none;
 	border: none;
-	padding: 0;
+	padding: 4px 8px;
 	font: inherit;
 	display: inline;
 	color: white;
 	cursor: pointer;
+	touch-action: manipulation;
 }
 #legendLinkButtonHidden {
-	background: none;
-	border: none;
-	padding: 0;
+	background: rgba(255,255,255,0.92);
+	border: 1px solid rgba(0,0,0,0.25);
+	border-radius: 4px;
+	padding: 6px 10px;
 	font: inherit;
 	display: inline;
 	outline-style: none;
 	color: black;
 	font-weight: bold;
 	cursor: pointer;
+	touch-action: manipulation;
 }
 #legend {
 	position: relative;
 	width: 200px;
 	height: 120px;
+	max-width: min(200px, calc(100vw - 24px));
 	border: 1px solid black;
 	border-radius: 5px;
 	float: right;

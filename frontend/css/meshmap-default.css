@@ -103,9 +103,70 @@ body {
 	/*width: 100%;*/
 }
 /*** this is the size of the map itself ***/
+html, body {
+	height: 100%;
+	height: 100dvh;
+	margin: 0;
+	padding: 0;
+	overflow: hidden;
+	overscroll-behavior: none;
+}
 #map {
-	/*width: 100vh;*/
-	height: 100vh;
+	width: 100%;
+	height: 100%;
+	height: 100dvh;
+	overflow: hidden;
+	touch-action: none;
+}
+.leaflet-container.leaflet-touch-drag.leaflet-touch-zoom,
+.leaflet-container {
+	touch-action: none;
+}
+
+/* Mid-screen control corners (used by verticalcenterleft / right) */
+.leaflet-verticalcenter {
+	position: absolute;
+	z-index: 1000;
+	pointer-events: none;
+	top: 50%;
+	transform: translateY(-50%);
+}
+.leaflet-verticalcenter .leaflet-control {
+	pointer-events: auto;
+	margin-top: 6px;
+	margin-bottom: 6px;
+}
+.leaflet-left.leaflet-verticalcenter {
+	left: 0;
+	padding-left: max(0px, env(safe-area-inset-left, 0px));
+}
+.leaflet-right.leaflet-verticalcenter {
+	right: 0;
+	padding-right: max(0px, env(safe-area-inset-right, 0px));
+}
+
+/* Safe areas for standard Leaflet corners */
+.leaflet-top {
+	top: env(safe-area-inset-top, 0px);
+}
+.leaflet-bottom {
+	bottom: env(safe-area-inset-bottom, 0px);
+}
+.leaflet-left {
+	left: env(safe-area-inset-left, 0px);
+}
+.leaflet-right {
+	right: env(safe-area-inset-right, 0px);
+}
+
+.leaflet-bar a,
+.leaflet-control-layers-toggle,
+.leaflet-control a,
+.meshmap-more-toggle,
+.meshmap-more-item,
+#legendLinkButton,
+#legendLinkButtonHidden {
+	touch-action: manipulation;
 }
 h1 {
     color: navy;
@@ -289,15 +350,26 @@ MAP_DETAILS {
     display: inline;
 }
 .leaflet-control-layers-expanded, .leaflet-control-layers-list {
-    height: 500px !important;
-    overflow: hidden !important;
-    width: 140px;
+	height: auto;
+	max-height: min(70vh, 500px);
+	overflow-x: hidden;
+	overflow-y: auto;
+	width: 140px;
+	touch-action: pan-y;
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
 }
 
 /** New stuff for the popup tabs **/
 .leaflet-popup-content{
-	width: 350px;
+	width: auto;
+	max-width: min(350px, calc(100vw - 32px));
 	margin: 3px 3px;
+	max-height: min(60vh, 420px);
+	overflow-y: auto;
+	touch-action: pan-y;
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
 }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip {
 	background: #0000009c !important;
@@ -426,6 +498,10 @@ MAP_DETAILS {
 	height: 30px !important;
 	width: 30px !important;
 }
+.meshmap-view-as-list {
+	width: 30px;
+	height: 30px;
+}
 .linkPopupContent {
 	background-color: #f8f8f8;
 	-webkit-border-bottom-left-radius: 15px;
@@ -450,11 +526,12 @@ MAP_DETAILS {
 	font-size: 1em;
 	text-align: center;
 	z-index: 9999;
-	top: 2px;
+	top: max(2px, env(safe-area-inset-top, 0px));
 	left: 50%;
-	right: 50%;
+	transform: translateX(-50%);
 	border-radius: 5px;
 	visibility: hidden;
+	pointer-events: none;
 }
 
 .leaflet-control-layers-toggle {
@@ -468,7 +545,159 @@ MAP_DETAILS {
 	background-image: url("../images/ruler-icon-colored.png");
 }
 .attribution {
-	font-weight: bold,
+	font-weight: bold;
 	color: inherit;
 	text-decoration: none;
+}
+
+/* More tools (phone / narrow): hidden on desktop */
+.meshmap-more-tools {
+	display: none;
+	position: relative;
+}
+.meshmap-more-toggle {
+	display: block;
+	width: 30px;
+	height: 30px;
+	line-height: 30px !important;
+	text-align: center;
+	font-size: 18px;
+	font-weight: bold;
+	text-decoration: none;
+	color: #333;
+	background: #fff;
+}
+.meshmap-more-panel {
+	position: absolute;
+	left: 100%;
+	top: 0;
+	margin-left: 6px;
+	background: #fff;
+	border: 2px solid rgba(0,0,0,0.2);
+	border-radius: 4px;
+	min-width: 88px;
+	box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+	z-index: 1001;
+}
+.meshmap-more-item {
+	display: block;
+	padding: 10px 12px;
+	color: #333;
+	text-decoration: none;
+	font: 14px/1.2 "Helvetica Neue", Arial, sans-serif;
+	white-space: nowrap;
+	border-bottom: 1px solid #eee;
+}
+.meshmap-more-item:last-child {
+	border-bottom: none;
+}
+.meshmap-more-item:hover {
+	background: #f4f4f4;
+}
+
+/* ----- Mobile / tablet ----- */
+@media (pointer: coarse), (max-width: 900px) {
+	.leaflet-bar a,
+	.leaflet-control-layers-toggle,
+	.meshmap-view-as-list,
+	.leaflet-ruler,
+	.meshmap-more-toggle {
+		min-width: 44px !important;
+		min-height: 44px !important;
+		width: 44px !important;
+		height: 44px !important;
+		line-height: 44px !important;
+	}
+	.viewAsListControl {
+		width: 44px;
+		height: 44px;
+		background-size: 28px 28px;
+	}
+	.leaflet-control-layers-toggle {
+		background-size: 28px 28px !important;
+	}
+	.leaflet-ruler {
+		background-size: 28px 28px !important;
+	}
+	#legendLinkButtonHidden,
+	#legendLinkButton {
+		min-height: 44px;
+		min-width: 44px;
+		padding: 8px 10px !important;
+		font-size: 16px !important;
+	}
+}
+
+@media (max-width: 700px) {
+	.meshmap-desktop-tool {
+		display: none !important;
+	}
+	.meshmap-more-tools {
+		display: block;
+	}
+
+	.leaflet-control-layers-expanded,
+	.leaflet-control-layers-list {
+		width: min(90vw, 280px) !important;
+		max-height: min(50dvh, 360px) !important;
+		height: auto !important;
+		overflow-y: auto !important;
+	}
+	.leaflet-control-layers label {
+		padding: 8px 4px;
+		font-size: 16px;
+	}
+
+	.leaflet-control-scale {
+		display: none;
+	}
+	.leaflet-control-attribution {
+		max-width: min(100vw - 16px, 360px);
+		font-size: 10px;
+		line-height: 1.25;
+	}
+
+	.popupTabs,
+	.popupTabs-nonmesh {
+		min-height: 0;
+	}
+	.popupTabs-link {
+		left: 0;
+		height: auto;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+
+	.leaflet-control-search.search-exp {
+		width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) !important;
+		max-width: calc(100vw - 24px);
+	}
+	.leaflet-control-search input {
+		font-size: 16px !important;
+	}
+	.leaflet-control-search .search-tooltip {
+		max-height: 40vh !important;
+		overflow-y: auto;
+		touch-action: pan-y;
+		overscroll-behavior: contain;
+	}
+
+	#spiderfyActive {
+		width: auto;
+		max-width: 70vw;
+		padding: 2px 10px;
+		font-size: 0.85em;
+	}
+
+	#legend {
+		width: min(200px, calc(100vw - 24px));
+		max-width: calc(100vw - 24px);
+	}
+}
+
+@media (max-width: 480px) {
+	.leaflet-control-attribution {
+		max-width: calc(100vw - 12px);
+	}
 }

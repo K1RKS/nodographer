@@ -195,6 +195,18 @@ function createLinkList(list) {
 	return linkList;
 }
 
+function meshmapBindPopupOptions() {
+	if (window.MeshmapMobile && typeof MeshmapMobile.popupOptions === 'function') {
+		return MeshmapMobile.popupOptions();
+	}
+	return {
+		maxWidth: Math.min(350, Math.max(220, window.innerWidth - 32)),
+		autoPan: true,
+		autoPanPadding: [48, 48],
+		keepInView: true
+	};
+}
+
 function createDeviceMarkers(allDevices) {
 	for(var i = 0; i < allDevices['900'].length; i++) {
 		var band = "900";
@@ -203,12 +215,12 @@ function createDeviceMarkers(allDevices) {
 			oms.addMarker(L.marker([allDevices[band][i].lat, allDevices[band][i].lon], {
 						icon: pulse9,
 						title: allDevices[band][i].node
-			}).bindPopup(popup, {maxwidth: 500}).addTo(nineHundredMHzStations));
+			}).bindPopup(popup, meshmapBindPopupOptions()).addTo(nineHundredMHzStations));
 		}else {
 			oms.addMarker(L.marker([allDevices[band][i].lat, allDevices[band][i].lon], {
 				icon: nineRadioCircle,
 				title: allDevices[band][i].node
-			}).bindPopup(popup, {maxwidth: 500}).addTo(nineHundredMHzStations));
+			}).bindPopup(popup, meshmapBindPopupOptions()).addTo(nineHundredMHzStations));
 		}
 		createLinks(allDevices[band][i].node, allDevices[band][i].link_info, allDevices[band][i].lat, allDevices[band][i].lon, nineLinksTX, "txRate");
 		createLinks(allDevices[band][i].node, allDevices[band][i].link_info, allDevices[band][i].lat, allDevices[band][i].lon, nineLinksThp, "Tput");
@@ -223,12 +235,12 @@ function createDeviceMarkers(allDevices) {
 			oms.addMarker(L.marker([allDevices[band][i].lat, allDevices[band][i].lon], {
 				icon: pulse2,
 				title: allDevices[band][i].node
-			}).bindPopup(popup, {maxwidth: 500}).addTo(twoGHzStations));
+			}).bindPopup(popup, meshmapBindPopupOptions()).addTo(twoGHzStations));
 		}else {
 			oms.addMarker(L.marker([allDevices[band][i].lat, allDevices[band][i].lon], {
 				icon: twoRadioCircle,
 				title: allDevices[band][i].node
-			}).bindPopup(popup, {maxwidth: 500}).addTo(twoGHzStations));
+			}).bindPopup(popup, meshmapBindPopupOptions()).addTo(twoGHzStations));
 		}
 		createLinks(allDevices[band][i].node, allDevices[band][i].link_info, allDevices[band][i].lat, allDevices[band][i].lon, twoLinksTX, "txRate");
 		createLinks(allDevices[band][i].node, allDevices[band][i].link_info, allDevices[band][i].lat, allDevices[band][i].lon, twoLinksThp, "Tput");
@@ -243,12 +255,12 @@ function createDeviceMarkers(allDevices) {
 			oms.addMarker(L.marker([allDevices[band][i].lat, allDevices[band][i].lon], {
 				icon: pulse3,
 				title: allDevices[band][i].node
-			}).bindPopup(popup, {maxwidth: 500}).addTo(threeGHzStations));
+			}).bindPopup(popup, meshmapBindPopupOptions()).addTo(threeGHzStations));
 		}else {
 			oms.addMarker(L.marker([allDevices[band][i].lat, allDevices[band][i].lon], {
 				icon: threeRadioCircle,
 				title: allDevices[band][i].node
-			}).bindPopup(popup, {maxwidth: 500}).addTo(threeGHzStations));
+			}).bindPopup(popup, meshmapBindPopupOptions()).addTo(threeGHzStations));
 		}
 		createLinks(allDevices[band][i].node, allDevices[band][i].link_info, allDevices[band][i].lat, allDevices[band][i].lon, threeLinksTX, "txRate");
 		createLinks(allDevices[band][i].node, allDevices[band][i].link_info, allDevices[band][i].lat, allDevices[band][i].lon, threeLinksThp, "Tput");
@@ -263,12 +275,12 @@ function createDeviceMarkers(allDevices) {
 			oms.addMarker(L.marker([allDevices[band][i].lat, allDevices[band][i].lon], {
 				icon: pulse5,
 				title: allDevices[band][i].node
-			}).bindPopup(popup, {maxwidth: 500}).addTo(fiveGHzStations));
+			}).bindPopup(popup, meshmapBindPopupOptions()).addTo(fiveGHzStations));
 		}else {
 			oms.addMarker(L.marker([allDevices[band][i].lat, allDevices[band][i].lon], {
 				icon: fiveRadioCircle,
 				title: allDevices[band][i].node
-			}).bindPopup(popup, {maxwidth: 500}).addTo(fiveGHzStations));
+			}).bindPopup(popup, meshmapBindPopupOptions()).addTo(fiveGHzStations));
 		}
 		createLinks(allDevices[band][i].node, allDevices[band][i].link_info, allDevices[band][i].lat, allDevices[band][i].lon, fiveLinksTX, "txRate");
 		createLinks(allDevices[band][i].node, allDevices[band][i].link_info, allDevices[band][i].lat, allDevices[band][i].lon, fiveLinksThp, "Tput");
@@ -283,12 +295,12 @@ function createDeviceMarkers(allDevices) {
 			oms.addMarker(L.marker([allDevices[band][i].lat, allDevices[band][i].lon], {
 				icon: pulseNon,
 				title: allDevices[band][i].node
-			}).bindPopup(popup, {maxwidth: 500}).addTo(noRFStations));
+			}).bindPopup(popup, meshmapBindPopupOptions()).addTo(noRFStations));
 		}else {
 			oms.addMarker(L.marker([allDevices[band][i].lat, allDevices[band][i].lon], {
 				icon: noRFCircle,
 				title: allDevices[band][i].node
-			}).bindPopup(popup, {maxwidth: 500}).addTo(noRFStations));
+			}).bindPopup(popup, meshmapBindPopupOptions()).addTo(noRFStations));
 		}
 		createLinks(allDevices[band][i].node, allDevices[band][i].link_info, allDevices[band][i].lat, allDevices[band][i].lon, noRFLinks);
 	}
@@ -299,12 +311,12 @@ function createDeviceMarkers(allDevices) {
 			oms.addMarker(L.marker([allDevices[band][i].lat, allDevices[band][i].lon], {
 					icon: pulseSuper,
 					title: allDevices[band][i].node
-				}).bindPopup(popup, {maxwidth: 500}).addTo(superNodeStations));
+				}).bindPopup(popup, meshmapBindPopupOptions()).addTo(superNodeStations));
 			}else {
 				oms.addMarker(L.marker([allDevices[band][i].lat, allDevices[band][i].lon], {
 					icon: superNode,
 					title: allDevices[band][i].node
-				}).bindPopup(popup, {maxwidth: 500}).addTo(superNodeStations));
+				}).bindPopup(popup, meshmapBindPopupOptions()).addTo(superNodeStations));
 			}
 			createLinks(allDevices[band][i].node, allDevices[band][i].link_info, allDevices[band][i].lat, allDevices[band][i].lon, superNodeLinks, "supernode");
 		}
@@ -367,6 +379,6 @@ function createGhostMarkers(allDevices) {
 		oms.addMarker(L.marker([ghost.lat, ghost.lon], {
 			icon: ghostMarkerIcon,
 			title: hostname + " (unpolled)"
-		}).bindPopup(popup, {maxwidth: 500}).addTo(nineHundredMHzStations));
+		}).bindPopup(popup, meshmapBindPopupOptions()).addTo(nineHundredMHzStations));
 	}
 }

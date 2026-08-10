@@ -24,6 +24,7 @@
 <html lang="en-US" data-theme="light">
 <head>
 	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 	<meta http-equiv="refresh" content="600">
         <link rel="icon" type="image/x-icon" href="images/meshmap.png">
 	
@@ -78,6 +79,7 @@
 
 	<script src="js/meshmap-local-tiles.js"></script>
 	<script src="js/meshmap-session.js"></script>
+	<script src="js/meshmap-mobile.js"></script>
 
 </head>
 <body>
@@ -471,7 +473,7 @@ L.control.search({
 	hideMarkerOnCollapse: true
 }).addTo(map);
 
-//the ruler
+//the ruler (hidden on narrow screens via CSS; available from More tools)
 var rulerOptions = {
 		position: 'verticalcenterleft',
 		lengthUnit: {
@@ -482,17 +484,16 @@ var rulerOptions = {
 	};
 L.control.ruler(rulerOptions).addTo(map);
 document.getElementById('ruler').title = 'Ruler\n(ESC 1x to stop, 2x to remove)';
+document.getElementById('ruler').classList.add('meshmap-desktop-tool');
 
-//view as list (node_report.php)
+//view as list (node_report) — desktop / wide; mobile uses More tools
 L.Control.viewAsList = L.Control.extend({
 	options: {
 		position: 'verticalcenterleft'
 	},
 	onAdd: function(map) {
-		var viewAsListControl = L.DomUtil.create('div', 'leaflet-control-custom leaflet-bar');
+		var viewAsListControl = L.DomUtil.create('div', 'leaflet-control-custom leaflet-bar meshmap-desktop-tool meshmap-view-as-list');
 		viewAsListControl.style.backgroundColor = 'white';
-		viewAsListControl.style.width = '30px';
-		viewAsListControl.style.height = '30px';
 		viewAsListControl.title = 'View as list (node report)';
 		var link = L.DomUtil.create('a', 'leaflet-bar-part leaflet-bar-part-single', viewAsListControl);
 		var listIcon = L.DomUtil.create('div', 'viewAsListControl', link);
@@ -510,6 +511,11 @@ L.control.viewAsList = function(opts) {
 }
 L.control.viewAsList().addTo(map);
 
+// Compact More tools (ruler + list) for phone / narrow tablet
+if (window.L && L.control.meshmapMoreTools) {
+	L.control.meshmapMoreTools({ position: 'verticalcenterleft' }).addTo(map);
+}
+
 //Slide Menu
 //L.control.slideMenu(contents, {width: '400px', position: 'verticalcenterleft'}).addTo(map);
 
@@ -518,6 +524,11 @@ layerControls = L.control.groupedLayers(baseLayers, groupedOverlays, {exclusiveG
 //layerControls.addTo(map);
 L.DomEvent.disableClickPropagation(layerControls._container);
 L.DomEvent.disableScrollPropagation(layerControls._container);
+
+// Mobile / tablet chrome: invalidateSize, layer auto-collapse, legend default
+if (window.MeshmapMobile) {
+	MeshmapMobile.enhanceMap(map, layerControls);
+}
 
 // Persist tileserver + view + overlays for this browser tab session
 if (window.MeshmapSession) {
