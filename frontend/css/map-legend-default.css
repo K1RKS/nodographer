@@ -103,17 +103,13 @@
 }
 
 #darkModeToggle {
-	/*#808080*/
+	/* Sit above Map Origin (left column) so Hide stays clear in the lower-right */
 	position: absolute;
-	top: 86px;
-/*	right: 2px; */
-/*	background: #808080; */
+	top: 82px;
+	left: 74px;
 	border-radius: 5px;
-/*	text-align: center; */
 	align-items: center;
 	height: 20px;
-/*	width: 75px; */
-	right: 1px;
 	color: white;
 	display: flex;
 }
