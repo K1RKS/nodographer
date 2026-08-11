@@ -157,9 +157,25 @@
     };
   }
 
+  function bindPopupScroll(map) {
+    if (!map) return;
+    map.on('popupopen', function (e) {
+      var root = e.popup && e.popup.getElement ? e.popup.getElement() : null;
+      if (!root || !window.L) return;
+      var panes = root.querySelectorAll(
+        '.popupTabContent, .popupTabContent-fw, .leaflet-popup-content'
+      );
+      for (var i = 0; i < panes.length; i++) {
+        L.DomEvent.disableClickPropagation(panes[i]);
+        L.DomEvent.disableScrollPropagation(panes[i]);
+      }
+    });
+  }
+
   function enhanceMap(map, layerControls) {
     bindInvalidateSize(map);
     bindLayerAutoCollapse(map, layerControls);
+    bindPopupScroll(map);
     collapseLegendForMobile();
   }
 
@@ -167,6 +183,7 @@
     isCompactUi: isCompactUi,
     bindInvalidateSize: bindInvalidateSize,
     bindLayerAutoCollapse: bindLayerAutoCollapse,
+    bindPopupScroll: bindPopupScroll,
     collapseLegendForMobile: collapseLegendForMobile,
     collapseLayerControl: collapseLayerControl,
     popupOptions: popupOptions,

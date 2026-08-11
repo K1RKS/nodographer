@@ -658,8 +658,12 @@ MAP_DETAILS {
 	}
 
 	.popupTabs,
-	.popupTabs-nonmesh {
-		min-height: 0;
+	.popupTabs-nonmesh,
+	.popupTabs-fw {
+		/* Absolute .popupTabContent needs a real height box to scroll inside */
+		min-height: min(48dvh, 320px) !important;
+		height: min(48dvh, 320px);
+		max-height: min(52dvh, 340px);
 	}
 	.popupTabs-link {
 		left: 0;
@@ -667,6 +671,18 @@ MAP_DETAILS {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px;
+		z-index: 2;
+	}
+	/* Inner tab pane is the scroll surface (not the outer leaflet content) */
+	.leaflet-popup-content {
+		max-height: none;
+		overflow: visible;
+	}
+	.popupTabContent,
+	.popupTabContent-fw {
+		touch-action: pan-y;
+		overscroll-behavior: contain;
+		-webkit-overflow-scrolling: touch;
 	}
 
 	.leaflet-control-search.search-exp {
