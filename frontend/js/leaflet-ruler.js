@@ -50,6 +50,7 @@
       L.DomEvent.disableClickPropagation(this._container);
       L.DomEvent.on(this._container, 'click', this._toggleMeasure, this);
       this._choice = false;
+      this._paused = false;
       this._defaultCursor = this._map._container.style.cursor;
       this._allLayers = L.layerGroup();
       return this._container;
@@ -57,37 +58,84 @@
     onRemove: function() {
       L.DomEvent.off(this._container, 'click', this._toggleMeasure, this);
     },
+    // Icon clicks: start → stop adding (keep lines) → clear and start again.
+    // Matches original ESC 1x stop / 2x remove, which phones cannot type.
     _toggleMeasure: function() {
-      this._choice = !this._choice;
+      if (this._choice) {
+        this._pauseMeasure();
+      } else if (this._paused) {
+        this._clearMeasure();
+        this._startMeasure();
+      } else {
+        this._startMeasure();
+      }
       this.options.events.onToggle(this._choice);
+    },
+    _resetPathState: function() {
       this._clickedLatLong = null;
       this._clickedPoints = [];
       this._totalLength = 0;
-      if (this._choice){
-        this._map.doubleClickZoom.disable();
-        L.DomEvent.on(this._map._container, 'keydown', this._escape, this);
-        L.DomEvent.on(this._map._container, 'dblclick', this._closePath, this);
-        this._container.classList.add("leaflet-ruler-clicked");
-        this._clickCount = 0;
-        this._tempLine = L.featureGroup().addTo(this._allLayers);
-        this._tempPoint = L.featureGroup().addTo(this._allLayers);
-        this._pointLayer = L.featureGroup().addTo(this._allLayers);
-        this._polylineLayer = L.featureGroup().addTo(this._allLayers);
-        this._allLayers.addTo(this._map);
-        this._map._container.style.cursor = 'crosshair';
-        this._map.on('click', this._clicked, this);
-        this._map.on('mousemove', this._moving, this);
-      }
-      else {
-        this._map.doubleClickZoom.enable();
-        L.DomEvent.off(this._map._container, 'keydown', this._escape, this);
-        L.DomEvent.off(this._map._container, 'dblclick', this._closePath, this);
-        this._container.classList.remove("leaflet-ruler-clicked");
+      this._clickCount = 0;
+      this._movingLatLong = null;
+    },
+    _startMeasure: function() {
+      this._choice = true;
+      this._paused = false;
+      this._resetPathState();
+      this._map.doubleClickZoom.disable();
+      L.DomEvent.on(this._map._container, 'keydown', this._escape, this);
+      L.DomEvent.on(this._map._container, 'dblclick', this._closePath, this);
+      this._container.classList.add("leaflet-ruler-clicked");
+      this._container.classList.remove("leaflet-ruler-paused");
+      this._tempLine = L.featureGroup().addTo(this._allLayers);
+      this._tempPoint = L.featureGroup().addTo(this._allLayers);
+      this._pointLayer = L.featureGroup().addTo(this._allLayers);
+      this._polylineLayer = L.featureGroup().addTo(this._allLayers);
+      this._allLayers.addTo(this._map);
+      this._map._container.style.cursor = 'crosshair';
+      this._map.on('click', this._clicked, this);
+      this._map.on('mousemove', this._moving, this);
+    },
+    _pauseMeasure: function() {
+      this._choice = false;
+      this._paused = true;
+      this._removeTempGuides();
+      this._resetPathState();
+      this._map.doubleClickZoom.enable();
+      L.DomEvent.off(this._map._container, 'keydown', this._escape, this);
+      L.DomEvent.off(this._map._container, 'dblclick', this._closePath, this);
+      this._container.classList.remove("leaflet-ruler-clicked");
+      this._container.classList.add("leaflet-ruler-paused");
+      this._map._container.style.cursor = this._defaultCursor;
+      this._map.off('click', this._clicked, this);
+      this._map.off('mousemove', this._moving, this);
+      L.DomEvent.on(this._container, 'click', this._toggleMeasure, this);
+    },
+    _clearMeasure: function() {
+      this._choice = false;
+      this._paused = false;
+      this._removeTempGuides();
+      this._resetPathState();
+      this._map.doubleClickZoom.enable();
+      L.DomEvent.off(this._map._container, 'keydown', this._escape, this);
+      L.DomEvent.off(this._map._container, 'dblclick', this._closePath, this);
+      this._container.classList.remove("leaflet-ruler-clicked");
+      this._container.classList.remove("leaflet-ruler-paused");
+      if (this._map.hasLayer(this._allLayers)) {
         this._map.removeLayer(this._allLayers);
-        this._allLayers = L.layerGroup();
-        this._map._container.style.cursor = this._defaultCursor;
-        this._map.off('click', this._clicked, this);
-        this._map.off('mousemove', this._moving, this);
+      }
+      this._allLayers = L.layerGroup();
+      this._map._container.style.cursor = this._defaultCursor;
+      this._map.off('click', this._clicked, this);
+      this._map.off('mousemove', this._moving, this);
+      L.DomEvent.on(this._container, 'click', this._toggleMeasure, this);
+    },
+    _removeTempGuides: function() {
+      if (this._tempLine && this._map.hasLayer(this._tempLine)) {
+        this._map.removeLayer(this._tempLine);
+      }
+      if (this._tempPoint && this._map.hasLayer(this._tempPoint)) {
+        this._map.removeLayer(this._tempPoint);
       }
     },
     _clicked: function(e) {
@@ -112,7 +160,6 @@
     },
     _moving: function(e) {
       if (this._clickedLatLong){
-        L.DomEvent.off(this._container, 'click', this._toggleMeasure, this);
         this._movingLatLong = e.latlng;
         if (this._tempLine){
           this._map.removeLayer(this._tempLine);
@@ -141,9 +188,13 @@
         if (this._clickCount > 0){
           this._closePath();
         }
+        else if (this._choice) {
+          this._pauseMeasure();
+          this.options.events.onToggle(this._choice);
+        }
         else {
-          this._choice = true;
-          this._toggleMeasure();
+          this._clearMeasure();
+          this.options.events.onToggle(this._choice);
         }
       }
     },
@@ -169,12 +220,12 @@
       };
     },
     _closePath: function() {
-      this._map.removeLayer(this._tempLine);
-      this._map.removeLayer(this._tempPoint);
-      if (this._clickCount <= 1) this._map.removeLayer(this._pointLayer);
-      this._choice = false;
+      this._removeTempGuides();
+      if (this._clickCount <= 1 && this._pointLayer && this._map.hasLayer(this._pointLayer)) {
+        this._map.removeLayer(this._pointLayer);
+      }
+      this._resetPathState();
       L.DomEvent.on(this._container, 'click', this._toggleMeasure, this);
-      this._toggleMeasure();
     }
   });
   L.control.ruler = function(options) {

@@ -541,8 +541,16 @@ MAP_DETAILS {
 .leaflet-ruler {
 	background-image: url("../images/ruler-icon.png");
 }
-.leaflet-ruler:hover {
+.leaflet-ruler:hover,
+.leaflet-ruler-clicked,
+.leaflet-ruler-paused {
 	background-image: url("../images/ruler-icon-colored.png");
+}
+.leaflet-ruler-clicked {
+	border-color: chartreuse !important;
+}
+.leaflet-ruler-paused {
+	border-color: orange !important;
 }
 .attribution {
 	font-weight: bold;

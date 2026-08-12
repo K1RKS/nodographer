@@ -474,7 +474,7 @@ L.control.search({
 	autoCollapse: true
 }).addTo(map);
 
-//the ruler (hidden on narrow screens via CSS; available from More tools)
+//the ruler (visible on desktop and mobile)
 var rulerOptions = {
 		position: 'verticalcenterleft',
 		lengthUnit: {
@@ -484,8 +484,7 @@ var rulerOptions = {
 		}
 	};
 L.control.ruler(rulerOptions).addTo(map);
-document.getElementById('ruler').title = 'Ruler\n(ESC 1x to stop, 2x to remove)';
-document.getElementById('ruler').classList.add('meshmap-desktop-tool');
+document.getElementById('ruler').title = 'Ruler\nTap: start → stop (keep) → clear & start again\nESC 1x stop, 2x remove';
 
 //view as list (node_report) — desktop / wide; mobile uses More tools
 L.Control.viewAsList = L.Control.extend({

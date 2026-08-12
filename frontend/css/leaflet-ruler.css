@@ -16,6 +16,9 @@
   background-image: url("../dist/icon-colored.png");
   border-color: chartreuse !important;
 }
+.leaflet-ruler-paused{
+  border-color: orange !important;
+}
 .leaflet-bar{
   background-color: #ffffff;
 }

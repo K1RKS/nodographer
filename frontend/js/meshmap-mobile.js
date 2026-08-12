@@ -88,8 +88,8 @@
   }
 
   /**
-   * Compact "More" control: ruler + node list on narrow screens.
-   * Desktop keeps separate ruler / list controls (CSS hides this bar).
+   * Compact "More" control: node list on narrow screens.
+   * Ruler stays as its own icon; desktop keeps a separate list control.
    */
   function createMoreToolsControl(options) {
     options = options || {};
@@ -118,11 +118,6 @@
         var panel = L.DomUtil.create('div', 'meshmap-more-panel', container);
         panel.hidden = true;
 
-        var rulerProxy = L.DomUtil.create('a', 'meshmap-more-item', panel);
-        rulerProxy.href = '#';
-        rulerProxy.title = 'Ruler';
-        rulerProxy.textContent = 'Ruler';
-
         var listLink = L.DomUtil.create('a', 'meshmap-more-item', panel);
         listLink.href = 'node_report/index.html';
         listLink.title = 'View as list (node report)';
@@ -136,16 +131,6 @@
           toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
           if (open) L.DomUtil.addClass(container, 'meshmap-more-open');
           else L.DomUtil.removeClass(container, 'meshmap-more-open');
-        });
-
-        L.DomEvent.on(rulerProxy, 'click', function (e) {
-          L.DomEvent.preventDefault(e);
-          L.DomEvent.stopPropagation(e);
-          var ruler = document.getElementById('ruler');
-          if (ruler) ruler.click();
-          panel.hidden = true;
-          toggle.setAttribute('aria-expanded', 'false');
-          L.DomUtil.removeClass(container, 'meshmap-more-open');
         });
 
         return container;
