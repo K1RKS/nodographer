@@ -209,7 +209,6 @@
         map.dragging.disable();
         dragDisabledMap = true;
       }
-      L.DomEvent.stopPropagation(e);
     }
 
     function onMove(e) {
@@ -237,7 +236,6 @@
       }
     }
 
-    L.DomEvent.disableClickPropagation(rail);
     L.DomEvent.on(rail, 'mousedown', onStart);
     rail.addEventListener('touchstart', onStart, { passive: false });
     L.DomEvent.on(document, 'mousemove', onMove);

@@ -18,11 +18,14 @@
       },
       circleMarker: {
         color: 'red',
-        radius: 2
+        radius: 6,
+        weight: 2,
+        fillOpacity: 1
       },
       lineStyle: {
         color: 'red',
-        dashArray: '1,6'
+        dashArray: '1,6',
+        weight: 3
       },
       lengthUnit: {
         display: 'km',
@@ -49,30 +52,44 @@
 
       L.DomEvent.disableClickPropagation(this._container);
       L.DomEvent.disableScrollPropagation(this._container);
-      // Stop touch/pointer from reaching the map (mobile tap-through)
-      L.DomEvent.on(this._container,
-        'dblclick mousedown mouseup touchstart touchend pointerdown pointerup',
-        L.DomEvent.stop);
-      L.DomEvent.on(this._container, 'click', this._toggleMeasure, this);
+      // stopPropagation only — preventDefault on touchstart kills the click on phones
+      L.DomEvent.on(this._container, 'mousedown touchstart pointerdown dblclick', this._stopIconBubble, this);
+      L.DomEvent.on(this._container, 'click', this._onIconClick, this);
+      L.DomEvent.on(this._container, 'touchend', this._onIconTouchEnd, this);
       this._choice = false;
       this._paused = false;
-      this._ignoreMapClickUntil = 0;
+      this._lastIconTouch = 0;
+      this._lastTouchMeasure = 0;
       this._defaultCursor = this._map._container.style.cursor;
       this._allLayers = L.layerGroup();
       return this._container;
     },
     onRemove: function() {
-      L.DomEvent.off(this._container, 'click', this._toggleMeasure, this);
-      L.DomEvent.off(this._container,
-        'dblclick mousedown mouseup touchstart touchend pointerdown pointerup',
-        L.DomEvent.stop);
+      L.DomEvent.off(this._container, 'mousedown touchstart pointerdown dblclick', this._stopIconBubble, this);
+      L.DomEvent.off(this._container, 'click', this._onIconClick, this);
+      L.DomEvent.off(this._container, 'touchend', this._onIconTouchEnd, this);
+      this._unbindMapMeasure();
+    },
+    _stopIconBubble: function(e) {
+      L.DomEvent.stopPropagation(e);
+    },
+    _onIconTouchEnd: function(e) {
+      L.DomEvent.stopPropagation(e);
+      L.DomEvent.preventDefault(e);
+      this._lastIconTouch = Date.now();
+      this._toggleMeasure(e);
+    },
+    _onIconClick: function(e) {
+      if (this._lastIconTouch && Date.now() - this._lastIconTouch < 500) {
+        L.DomEvent.stop(e);
+        return;
+      }
+      this._toggleMeasure(e);
     },
     // Icon clicks: start → stop adding (keep lines) → clear and start again.
     // Matches original ESC 1x stop / 2x remove, which phones cannot type.
     _toggleMeasure: function(e) {
-      if (e) L.DomEvent.stop(e);
-      // Swallow the delayed synthetic click mobile browsers fire on the map
-      this._ignoreMapClickUntil = Date.now() + 600;
+      if (e) L.DomEvent.stopPropagation(e);
       if (this._choice) {
         this._pauseMeasure();
       } else if (this._paused) {
@@ -105,8 +122,7 @@
       this._polylineLayer = L.featureGroup().addTo(this._allLayers);
       this._allLayers.addTo(this._map);
       this._map._container.style.cursor = 'crosshair';
-      this._map.on('click', this._clicked, this);
-      this._map.on('mousemove', this._moving, this);
+      this._bindMapMeasure();
     },
     _pauseMeasure: function() {
       this._choice = false;
@@ -119,8 +135,7 @@
       this._container.classList.remove("leaflet-ruler-clicked");
       this._container.classList.add("leaflet-ruler-paused");
       this._map._container.style.cursor = this._defaultCursor;
-      this._map.off('click', this._clicked, this);
-      this._map.off('mousemove', this._moving, this);
+      this._unbindMapMeasure();
     },
     _clearMeasure: function() {
       this._choice = false;
@@ -137,8 +152,26 @@
       }
       this._allLayers = L.layerGroup();
       this._map._container.style.cursor = this._defaultCursor;
+      this._unbindMapMeasure();
+    },
+    _bindMapMeasure: function() {
+      this._map.on('click', this._clicked, this);
+      this._map.on('mousemove', this._moving, this);
+      L.DomEvent.on(this._map._container, 'touchend', this._onMapTouchEnd, this);
+    },
+    _unbindMapMeasure: function() {
       this._map.off('click', this._clicked, this);
       this._map.off('mousemove', this._moving, this);
+      L.DomEvent.off(this._map._container, 'touchend', this._onMapTouchEnd, this);
+    },
+    _onMapTouchEnd: function(e) {
+      if (!this._choice) return;
+      if (this._eventFromRuler(e)) return;
+      var t = e.changedTouches && e.changedTouches[0];
+      if (!t || !this._map.mouseEventToLatLng) return;
+      var latlng = this._map.mouseEventToLatLng(t);
+      this._lastTouchMeasure = Date.now();
+      this._clicked({ latlng: latlng, originalEvent: e });
     },
     _removeTempGuides: function() {
       if (this._tempLine && this._map.hasLayer(this._tempLine)) {
@@ -148,41 +181,53 @@
         this._map.removeLayer(this._tempPoint);
       }
     },
-    _eventFromControl: function(e) {
+    _eventFromRuler: function(e) {
       var oe = e && (e.originalEvent || e);
-      var t = oe && (oe.target || oe.srcElement);
-      if (!t) return false;
-      if (t.closest) {
-        return !!t.closest('.leaflet-control, .leaflet-control-container, #ruler');
+      if (!oe) return false;
+      var t = oe.target || oe.srcElement;
+      if (t && t.closest && t.closest('#ruler, .leaflet-ruler')) return true;
+      var x = oe.clientX;
+      var y = oe.clientY;
+      if ((x == null || y == null) && oe.changedTouches && oe.changedTouches[0]) {
+        x = oe.changedTouches[0].clientX;
+        y = oe.changedTouches[0].clientY;
       }
-      while (t) {
-        if (t.id === 'ruler' || (t.className && String(t.className).indexOf('leaflet-control') !== -1)) {
-          return true;
-        }
-        t = t.parentNode;
-      }
-      return false;
+      if (x == null || y == null || !this._container.getBoundingClientRect) return false;
+      var r = this._container.getBoundingClientRect();
+      var pad = 10;
+      return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
     },
     _clicked: function(e) {
-      if (this._ignoreMapClickUntil && Date.now() < this._ignoreMapClickUntil) return;
-      if (this._eventFromControl(e)) return;
-      this._clickedLatLong = e.latlng;
-      this._clickedPoints.push(this._clickedLatLong);
-      L.circleMarker(this._clickedLatLong, this.options.circleMarker).addTo(this._pointLayer);
-      if(this._clickCount > 0 && !e.latlng.equals(this._clickedPoints[this._clickedPoints.length - 2])){
-        if (this._movingLatLong){
-          L.polyline([this._clickedPoints[this._clickCount-1], this._movingLatLong], this.options.lineStyle).addTo(this._polylineLayer);
-        }
-        var text;
+      if (!e || !e.latlng) return;
+      if (this._eventFromRuler(e)) return;
+      if (e.originalEvent && e.originalEvent.type === 'click' &&
+          this._lastTouchMeasure && Date.now() - this._lastTouchMeasure < 500) {
+        return;
+      }
+
+      var prev = this._clickedLatLong;
+      // Touch devices often have no mousemove; compute segment from last point → tap
+      if (prev) {
+        this._movingLatLong = e.latlng;
+        this._calculateBearingAndDistance();
+      }
+
+      L.circleMarker(e.latlng, this.options.circleMarker).addTo(this._pointLayer);
+
+      if (this._clickCount > 0 && prev && !e.latlng.equals(prev) && this._result) {
+        L.polyline([prev, e.latlng], this.options.lineStyle).addTo(this._polylineLayer);
         this._totalLength += this._result.Distance;
-        if (this._clickCount > 1){
+        var text;
+        if (this._clickCount > 1) {
           text = '<b>' + this.options.angleUnit.label + '</b>&nbsp;' + this._result.Bearing.toFixed(this.options.angleUnit.decimal) + '&nbsp;' + this.options.angleUnit.display + '<br><b>' + this.options.lengthUnit.label + '</b>&nbsp;' + this._totalLength.toFixed(this.options.lengthUnit.decimal) + '&nbsp;' +  this.options.lengthUnit.display;
-        }
-        else {
+        } else {
           text = '<b>' + this.options.angleUnit.label + '</b>&nbsp;' + this._result.Bearing.toFixed(this.options.angleUnit.decimal) + '&nbsp;' + this.options.angleUnit.display + '<br><b>' + this.options.lengthUnit.label + '</b>&nbsp;' + this._result.Distance.toFixed(this.options.lengthUnit.decimal) + '&nbsp;' +  this.options.lengthUnit.display;
         }
-        L.circleMarker(this._clickedLatLong, this.options.circleMarker).bindTooltip(text, {permanent: true, className: 'result-tooltip'}).addTo(this._pointLayer).openTooltip();
+        L.circleMarker(e.latlng, this.options.circleMarker).bindTooltip(text, {permanent: true, className: 'result-tooltip'}).addTo(this._pointLayer).openTooltip();
       }
+
+      this._clickedLatLong = e.latlng;
+      this._clickedPoints.push(e.latlng);
       this._clickCount++;
     },
     _moving: function(e) {
