@@ -486,23 +486,20 @@ var rulerOptions = {
 L.control.ruler(rulerOptions).addTo(map);
 document.getElementById('ruler').title = 'Ruler\nTap: start → stop (keep) → clear & start again\nESC 1x stop, 2x remove';
 
-//view as list (node_report) — desktop / wide; mobile uses More tools
+//view as list / spreadsheet (node report)
 L.Control.viewAsList = L.Control.extend({
 	options: {
 		position: 'verticalcenterleft'
 	},
 	onAdd: function(map) {
-		var viewAsListControl = L.DomUtil.create('div', 'leaflet-control-custom leaflet-bar meshmap-desktop-tool meshmap-view-as-list');
+		var viewAsListControl = L.DomUtil.create('div', 'leaflet-control-custom leaflet-bar meshmap-view-as-list');
 		viewAsListControl.style.backgroundColor = 'white';
-		viewAsListControl.title = 'View as list (node report)';
+		viewAsListControl.title = 'View as spreadsheet / table (node report)';
 		var link = L.DomUtil.create('a', 'leaflet-bar-part leaflet-bar-part-single', viewAsListControl);
+		link.href = 'node_report/index.html';
+		link.setAttribute('aria-label', 'View as spreadsheet / table');
 		var listIcon = L.DomUtil.create('div', 'viewAsListControl', link);
-		listIcon.style.fontSize = '20px';
-		listIcon.style.verticalAlign = 'middle';
-
-		viewAsListControl.onclick = function() {
-			window.location = "node_report/index.html"
-		}
+		L.DomEvent.disableClickPropagation(viewAsListControl);
 		return viewAsListControl;
 	}
 });
@@ -510,11 +507,6 @@ L.control.viewAsList = function(opts) {
 	return new L.Control.viewAsList(opts);
 }
 L.control.viewAsList().addTo(map);
-
-// Compact More tools (ruler + list) for phone / narrow tablet
-if (window.L && L.control.meshmapMoreTools) {
-	L.control.meshmapMoreTools({ position: 'verticalcenterleft' }).addTo(map);
-}
 
 //Slide Menu
 //L.control.slideMenu(contents, {width: '400px', position: 'verticalcenterleft'}).addTo(map);

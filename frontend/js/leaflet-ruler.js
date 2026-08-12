@@ -48,19 +48,31 @@
       this._container.setAttribute('id', 'ruler');
 
       L.DomEvent.disableClickPropagation(this._container);
+      L.DomEvent.disableScrollPropagation(this._container);
+      // Stop touch/pointer from reaching the map (mobile tap-through)
+      L.DomEvent.on(this._container,
+        'dblclick mousedown mouseup touchstart touchend pointerdown pointerup',
+        L.DomEvent.stop);
       L.DomEvent.on(this._container, 'click', this._toggleMeasure, this);
       this._choice = false;
       this._paused = false;
+      this._ignoreMapClickUntil = 0;
       this._defaultCursor = this._map._container.style.cursor;
       this._allLayers = L.layerGroup();
       return this._container;
     },
     onRemove: function() {
       L.DomEvent.off(this._container, 'click', this._toggleMeasure, this);
+      L.DomEvent.off(this._container,
+        'dblclick mousedown mouseup touchstart touchend pointerdown pointerup',
+        L.DomEvent.stop);
     },
     // Icon clicks: start → stop adding (keep lines) → clear and start again.
     // Matches original ESC 1x stop / 2x remove, which phones cannot type.
-    _toggleMeasure: function() {
+    _toggleMeasure: function(e) {
+      if (e) L.DomEvent.stop(e);
+      // Swallow the delayed synthetic click mobile browsers fire on the map
+      this._ignoreMapClickUntil = Date.now() + 600;
       if (this._choice) {
         this._pauseMeasure();
       } else if (this._paused) {
@@ -109,7 +121,6 @@
       this._map._container.style.cursor = this._defaultCursor;
       this._map.off('click', this._clicked, this);
       this._map.off('mousemove', this._moving, this);
-      L.DomEvent.on(this._container, 'click', this._toggleMeasure, this);
     },
     _clearMeasure: function() {
       this._choice = false;
@@ -128,7 +139,6 @@
       this._map._container.style.cursor = this._defaultCursor;
       this._map.off('click', this._clicked, this);
       this._map.off('mousemove', this._moving, this);
-      L.DomEvent.on(this._container, 'click', this._toggleMeasure, this);
     },
     _removeTempGuides: function() {
       if (this._tempLine && this._map.hasLayer(this._tempLine)) {
@@ -138,7 +148,24 @@
         this._map.removeLayer(this._tempPoint);
       }
     },
+    _eventFromControl: function(e) {
+      var oe = e && (e.originalEvent || e);
+      var t = oe && (oe.target || oe.srcElement);
+      if (!t) return false;
+      if (t.closest) {
+        return !!t.closest('.leaflet-control, .leaflet-control-container, #ruler');
+      }
+      while (t) {
+        if (t.id === 'ruler' || (t.className && String(t.className).indexOf('leaflet-control') !== -1)) {
+          return true;
+        }
+        t = t.parentNode;
+      }
+      return false;
+    },
     _clicked: function(e) {
+      if (this._ignoreMapClickUntil && Date.now() < this._ignoreMapClickUntil) return;
+      if (this._eventFromControl(e)) return;
       this._clickedLatLong = e.latlng;
       this._clickedPoints.push(this._clickedLatLong);
       L.circleMarker(this._clickedLatLong, this.options.circleMarker).addTo(this._pointLayer);
@@ -225,7 +252,6 @@
         this._map.removeLayer(this._pointLayer);
       }
       this._resetPathState();
-      L.DomEvent.on(this._container, 'click', this._toggleMeasure, this);
     }
   });
   L.control.ruler = function(options) {

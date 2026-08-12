@@ -1,6 +1,6 @@
 /**
  * Mobile / tablet helpers for Nodographer map chrome.
- * invalidateSize on rotate, compact layers, default-collapsed legend, more-tools.
+ * invalidateSize on rotate, compact layers, default-collapsed legend, control rail slide.
  */
 (function (window) {
   function isCompactUi() {
@@ -87,61 +87,6 @@
     };
   }
 
-  /**
-   * Compact "More" control: node list on narrow screens.
-   * Ruler stays as its own icon; desktop keeps a separate list control.
-   */
-  function createMoreToolsControl(options) {
-    options = options || {};
-    return L.control({ position: options.position || 'verticalcenterleft' });
-  }
-
-  // Full control class
-  if (window.L) {
-    L.Control.MeshmapMoreTools = L.Control.extend({
-      options: { position: 'verticalcenterleft' },
-      onAdd: function () {
-        var container = L.DomUtil.create(
-          'div',
-          'leaflet-bar leaflet-control meshmap-more-tools'
-        );
-        L.DomEvent.disableClickPropagation(container);
-        L.DomEvent.disableScrollPropagation(container);
-
-        var toggle = L.DomUtil.create('a', 'meshmap-more-toggle', container);
-        toggle.href = '#';
-        toggle.title = 'More tools';
-        toggle.setAttribute('role', 'button');
-        toggle.setAttribute('aria-expanded', 'false');
-        toggle.innerHTML = '&#8943;';
-
-        var panel = L.DomUtil.create('div', 'meshmap-more-panel', container);
-        panel.hidden = true;
-
-        var listLink = L.DomUtil.create('a', 'meshmap-more-item', panel);
-        listLink.href = 'node_report/index.html';
-        listLink.title = 'View as list (node report)';
-        listLink.textContent = 'List';
-
-        L.DomEvent.on(toggle, 'click', function (e) {
-          L.DomEvent.preventDefault(e);
-          L.DomEvent.stopPropagation(e);
-          var open = panel.hidden;
-          panel.hidden = !open;
-          toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-          if (open) L.DomUtil.addClass(container, 'meshmap-more-open');
-          else L.DomUtil.removeClass(container, 'meshmap-more-open');
-        });
-
-        return container;
-      }
-    });
-
-    L.control.meshmapMoreTools = function (opts) {
-      return new L.Control.MeshmapMoreTools(opts);
-    };
-  }
-
   function bindPopupScroll(map) {
     if (!map) return;
     map.on('popupopen', function (e) {
@@ -157,10 +102,166 @@
     });
   }
 
+  function isShortViewport() {
+    try {
+      return window.matchMedia('(max-height: 560px)').matches;
+    } catch (e) {
+      return window.innerHeight <= 560;
+    }
+  }
+
+  /**
+   * On short (usually landscape phone) screens, let the left control rail
+   * be dragged up/down so cut-off icons can be reached.
+   */
+  function bindControlRailSlide(map) {
+    if (!map || !map._controlCorners || !window.L) return;
+    var rail = map._controlCorners.verticalcenterleft;
+    if (!rail) return;
+
+    var offset = 0;
+    var startY = 0;
+    var startOffset = 0;
+    var dragging = false;
+    var moved = false;
+    var dragDisabledMap = false;
+
+    function viewBox() {
+      var vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      var vvTop = window.visualViewport ? window.visualViewport.offsetTop : 0;
+      return { top: vvTop + 6, bottom: vvTop + vh - 6 };
+    }
+
+    function childExtent() {
+      var kids = rail.children;
+      var top = Infinity;
+      var bottom = -Infinity;
+      for (var i = 0; i < kids.length; i++) {
+        var r = kids[i].getBoundingClientRect();
+        if (!r.height && !r.width) continue;
+        if (r.top < top) top = r.top;
+        if (r.bottom > bottom) bottom = r.bottom;
+      }
+      if (!isFinite(top)) {
+        var rr = rail.getBoundingClientRect();
+        return { top: rr.top, bottom: rr.bottom };
+      }
+      return { top: top, bottom: bottom };
+    }
+
+    function slideLimits() {
+      var box = viewBox();
+      var ext = childExtent();
+      var natTop = ext.top - offset;
+      var natBottom = ext.bottom - offset;
+      var h = natBottom - natTop;
+      var room = box.bottom - box.top;
+      if (h <= room + 2) {
+        return { min: 0, max: 0 };
+      }
+      var topAlign = box.top - natTop;
+      var bottomAlign = box.bottom - natBottom;
+      return {
+        min: Math.min(topAlign, bottomAlign),
+        max: Math.max(topAlign, bottomAlign)
+      };
+    }
+
+    function applyOffset() {
+      if (!isShortViewport()) {
+        offset = 0;
+        rail.style.top = '';
+        rail.style.transform = '';
+        L.DomUtil.removeClass(rail, 'meshmap-rail-overflow');
+        return;
+      }
+      rail.style.top = 'max(6px, env(safe-area-inset-top, 0px))';
+      var lim = slideLimits();
+      if (offset < lim.min) offset = lim.min;
+      if (offset > lim.max) offset = lim.max;
+      rail.style.transform = 'translateY(' + offset + 'px)';
+      if (lim.min < lim.max) L.DomUtil.addClass(rail, 'meshmap-rail-overflow');
+      else L.DomUtil.removeClass(rail, 'meshmap-rail-overflow');
+    }
+
+    function eventY(e) {
+      if (e.touches && e.touches.length) return e.touches[0].clientY;
+      if (e.changedTouches && e.changedTouches.length) return e.changedTouches[0].clientY;
+      return e.clientY;
+    }
+
+    function isExpandedLayers(t) {
+      if (!t || !t.closest) return false;
+      return !!t.closest('.leaflet-control-layers-expanded .leaflet-control-layers-list');
+    }
+
+    function onStart(e) {
+      if (!isShortViewport()) return;
+      applyOffset();
+      var lim = slideLimits();
+      if (lim.min >= lim.max) return;
+      if (isExpandedLayers(e.target)) return;
+      dragging = true;
+      moved = false;
+      startY = eventY(e);
+      startOffset = offset;
+      if (map.dragging && map.dragging.enabled()) {
+        map.dragging.disable();
+        dragDisabledMap = true;
+      }
+      L.DomEvent.stopPropagation(e);
+    }
+
+    function onMove(e) {
+      if (!dragging) return;
+      var y = eventY(e);
+      var dy = y - startY;
+      if (!moved && Math.abs(dy) < 8) return;
+      moved = true;
+      offset = startOffset + dy;
+      applyOffset();
+      L.DomEvent.preventDefault(e);
+      L.DomEvent.stopPropagation(e);
+    }
+
+    function onEnd(e) {
+      if (!dragging) return;
+      dragging = false;
+      if (dragDisabledMap && map.dragging) {
+        map.dragging.enable();
+        dragDisabledMap = false;
+      }
+      if (moved) {
+        L.DomEvent.preventDefault(e);
+        L.DomEvent.stopPropagation(e);
+      }
+    }
+
+    L.DomEvent.disableClickPropagation(rail);
+    L.DomEvent.on(rail, 'mousedown', onStart);
+    rail.addEventListener('touchstart', onStart, { passive: false });
+    L.DomEvent.on(document, 'mousemove', onMove);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    L.DomEvent.on(document, 'mouseup', onEnd);
+    document.addEventListener('touchend', onEnd);
+    document.addEventListener('touchcancel', onEnd);
+
+    window.addEventListener('resize', applyOffset);
+    window.addEventListener('orientationchange', function () {
+      offset = 0;
+      setTimeout(applyOffset, 250);
+    });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', applyOffset);
+    }
+    setTimeout(applyOffset, 80);
+  }
+
   function enhanceMap(map, layerControls) {
     bindInvalidateSize(map);
     bindLayerAutoCollapse(map, layerControls);
     bindPopupScroll(map);
+    bindControlRailSlide(map);
     collapseLegendForMobile();
   }
 
@@ -169,6 +270,7 @@
     bindInvalidateSize: bindInvalidateSize,
     bindLayerAutoCollapse: bindLayerAutoCollapse,
     bindPopupScroll: bindPopupScroll,
+    bindControlRailSlide: bindControlRailSlide,
     collapseLegendForMobile: collapseLegendForMobile,
     collapseLayerControl: collapseLayerControl,
     popupOptions: popupOptions,

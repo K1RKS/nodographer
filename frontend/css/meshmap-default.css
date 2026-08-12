@@ -140,6 +140,22 @@ html, body {
 	left: 0;
 	padding-left: max(0px, env(safe-area-inset-left, 0px));
 }
+
+/* Short landscape: top-align the left rail so it can be dragged to reveal cut-off icons */
+@media (max-height: 560px) {
+	.leaflet-left.leaflet-verticalcenter {
+		top: max(6px, env(safe-area-inset-top, 0px));
+		bottom: auto;
+		transform: none;
+		pointer-events: auto;
+		touch-action: none;
+		max-height: none;
+		overflow: visible;
+	}
+	.leaflet-left.leaflet-verticalcenter.meshmap-rail-overflow {
+		cursor: ns-resize;
+	}
+}
 .leaflet-right.leaflet-verticalcenter {
 	right: 0;
 	padding-right: max(0px, env(safe-area-inset-right, 0px));
@@ -162,8 +178,7 @@ html, body {
 .leaflet-bar a,
 .leaflet-control-layers-toggle,
 .leaflet-control a,
-.meshmap-more-toggle,
-.meshmap-more-item,
+.meshmap-view-as-list,
 #legendLinkButton,
 #legendLinkButtonHidden {
 	touch-action: manipulation;
@@ -486,9 +501,10 @@ MAP_DETAILS {
 .viewAsListControl{
   height: 30px;
   width: 30px;
-  background-image: url("../images/list-icon.png");
+  background-image: url("../images/spreadsheet-icon.svg");
   background-repeat: no-repeat;
   background-position: center;
+  background-size: 20px 20px;
 }
 .leaflet-ruler {
 	height: 30px !important;
@@ -558,58 +574,12 @@ MAP_DETAILS {
 	text-decoration: none;
 }
 
-/* More tools (phone / narrow): hidden on desktop */
-.meshmap-more-tools {
-	display: none;
-	position: relative;
-}
-.meshmap-more-toggle {
-	display: block;
-	width: 30px;
-	height: 30px;
-	line-height: 30px !important;
-	text-align: center;
-	font-size: 18px;
-	font-weight: bold;
-	text-decoration: none;
-	color: #333;
-	background: #fff;
-}
-.meshmap-more-panel {
-	position: absolute;
-	left: 100%;
-	top: 0;
-	margin-left: 6px;
-	background: #fff;
-	border: 2px solid rgba(0,0,0,0.2);
-	border-radius: 4px;
-	min-width: 88px;
-	box-shadow: 0 1px 5px rgba(0,0,0,0.4);
-	z-index: 1001;
-}
-.meshmap-more-item {
-	display: block;
-	padding: 10px 12px;
-	color: #333;
-	text-decoration: none;
-	font: 14px/1.2 "Helvetica Neue", Arial, sans-serif;
-	white-space: nowrap;
-	border-bottom: 1px solid #eee;
-}
-.meshmap-more-item:last-child {
-	border-bottom: none;
-}
-.meshmap-more-item:hover {
-	background: #f4f4f4;
-}
-
 /* ----- Mobile / tablet ----- */
 @media (pointer: coarse), (max-width: 900px) {
 	.leaflet-bar a,
 	.leaflet-control-layers-toggle,
 	.meshmap-view-as-list,
-	.leaflet-ruler,
-	.meshmap-more-toggle {
+	.leaflet-ruler {
 		min-width: 44px !important;
 		min-height: 44px !important;
 		width: 44px !important;
@@ -619,7 +589,7 @@ MAP_DETAILS {
 	.viewAsListControl {
 		width: 44px;
 		height: 44px;
-		background-size: 28px 28px;
+		background-size: 26px 26px;
 	}
 	.leaflet-control-layers-toggle {
 		background-size: 28px 28px !important;
@@ -637,13 +607,6 @@ MAP_DETAILS {
 }
 
 @media (max-width: 700px) {
-	.meshmap-desktop-tool {
-		display: none !important;
-	}
-	.meshmap-more-tools {
-		display: block;
-	}
-
 	.leaflet-control-layers-expanded,
 	.leaflet-control-layers-list {
 		width: min(90vw, 280px) !important;
