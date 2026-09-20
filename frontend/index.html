@@ -64,10 +64,6 @@
 	<script src="js/leaflet-ruler.js"></script>
 	<link rel="stylesheet" href="css/leaflet-ruler.css">
 
-	<!- testing elevation stuff -->
-	<link rel="stylesheet" href="https://unpkg.com/@raruto/leaflet-elevation/dist/leaflet-elevation.css" />
-	<script src="https://unpkg.com/@raruto/leaflet-elevation/dist/leaflet-elevation.js"></script>
-	
 	<!-- local custom stuff. now with more java! -->
 	<link rel="stylesheet" href="css/meshmap-default.css">
 	<script src="js/meshmap-legend.js"></script>
@@ -188,51 +184,6 @@ function initializeMap() {
 			}
 		}
 	}
-
-	/*
-	 * Elevation plugin options (currently unused). Leaving these here caused
-	 * a syntax error because they were not inside an object literal. Commented
-	 * out to keep the page loading cleanly.
-	 *
-	 * followMarker: true,
-	 * autofitBounds: true,
-	 * imperial: false,
-	 * reverseCoords: false,
-	 * acceleration: false,
-	 * slope: false,
-	 * speed: false,
-	 * altitude: true,
-	 * time: true,
-	 */
-
-	/*
-	 * Elevation plugin options (unused). Keeping commented so they don't break
-	 * the surrounding script until the feature is wired in.
-	 *
-	 * distance: true,
-	 * summary: 'multiline',
-	 * downloadLink: 'link',
-	 * ruler: true,
-	 * legend: true,
-	 * almostOver: true,
-	 * distanceMarkers: false,
-	 * edgeScale: false,
-	 * hotline: true,
-	 * timestamps: false,
-	 * waypoints: true,
-	 * wptIcons: {
-	 *   '': L.divIcon({
-	 *     className: 'elevation-waypoint-marker',
-	 *     html: '<i class="elevation-waypoint-icon"></i>',
-	 *     iconSize: [30, 30],
-	 *     iconAnchor: [8, 30],
-	 *   }),
-	 * },
-	 * wptLabels: true,
-	 * preferCanvas: true,
-	 */
-
-	// END ELEVATION TEST
 
 //Update page Title
 document.title = mapInfo.title;
