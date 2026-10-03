@@ -42,3 +42,13 @@
 .plus-length{
   padding-left: 45px;
 }
+.ruler-arrow-icon{
+  background: none;
+  border: none;
+  pointer-events: none;
+}
+.ruler-arrow{
+  position: absolute;
+  overflow: visible;
+  filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff);
+}

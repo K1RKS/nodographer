@@ -241,6 +241,7 @@
 
       if (this._clickCount > 0 && prev && !e.latlng.equals(prev) && this._result) {
         L.polyline([prev, e.latlng], this.options.lineStyle).addTo(this._polylineLayer);
+        this._arrowHead(prev, e.latlng).addTo(this._polylineLayer);
         this._totalLength += this._result.Distance;
         var text;
         if (this._clickCount > 1) {
@@ -276,6 +277,7 @@
         this._calculateBearingAndDistance();
         this._addedLength = this._result.Distance + this._totalLength;
         L.polyline([this._clickedLatLong, this._movingLatLong], this.options.lineStyle).addTo(this._tempLine);
+        this._arrowHead(this._clickedLatLong, this._movingLatLong).addTo(this._tempLine);
         if (this._clickCount > 1){
           text = '<b>' + this.options.angleUnit.label + '</b>&nbsp;' + this._result.Bearing.toFixed(this.options.angleUnit.decimal) + '&nbsp;' + this.options.angleUnit.display + '<br><b>' + this.options.lengthUnit.label + '</b>&nbsp;' + this._addedLength.toFixed(this.options.lengthUnit.decimal) + '&nbsp;' +  this.options.lengthUnit.display + '<br><div class="plus-length">(+' + this._result.Distance.toFixed(this.options.lengthUnit.decimal) + ')</div>';
         }
@@ -284,6 +286,23 @@
         }
         L.circleMarker(this._movingLatLong, this.options.circleMarker).bindTooltip(text, {sticky: true, offset: L.point(0, -40) ,className: 'moving-tooltip'}).addTo(this._tempPoint).openTooltip();
       }
+    },
+    // Screen angles are zoom-invariant in Web Mercator, so one rotation stays correct after zooming.
+    _arrowHead: function(from, to) {
+      var a = this._map.project(from), b = this._map.project(to);
+      var deg = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+      var cm = this.options.circleMarker || {};
+      var back = (cm.radius || 0) + (cm.weight || 0) / 2;
+      var len = 16, half = 6;
+      var color = (this.options.lineStyle && this.options.lineStyle.color) || 'red';
+      var html = '<svg class="ruler-arrow" width="' + len + '" height="' + (half * 2) + '" viewBox="0 0 ' + len + ' ' + (half * 2) + '"' +
+        ' style="left:' + (-(len + back)) + 'px;top:' + (-half) + 'px;transform-origin:' + (len + back) + 'px ' + half + 'px;transform:rotate(' + deg + 'deg)">' +
+        '<polygon points="0,0 ' + len + ',' + half + ' 0,' + (half * 2) + ' 4,' + half + '" fill="' + color + '"/></svg>';
+      return L.marker(to, {
+        icon: L.divIcon({ className: 'ruler-arrow-icon', html: html, iconSize: [0, 0], iconAnchor: [0, 0] }),
+        interactive: false,
+        keyboard: false
+      });
     },
     _escape: function(e) {
       if (e.keyCode === 27){
