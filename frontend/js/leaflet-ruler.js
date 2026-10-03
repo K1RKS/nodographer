@@ -43,6 +43,30 @@
     isActive: function () {
       return this._choice;
     },
+    isMeasuring: function () {
+      return !!this._choice;
+    },
+    pointCount: function () {
+      return this._choice ? (this._clickCount || 0) : 0;
+    },
+    // Start (or restart after a pause) with the first point at latlng
+    startAt: function (latlng) {
+      if (this._paused) this._clearMeasure();
+      if (!this._choice) this._startMeasure();
+      this._clicked({ latlng: L.latLng(latlng) });
+      this.options.events.onToggle(this._choice);
+    },
+    addPoint: function (latlng) {
+      if (!this._choice) return;
+      this._clicked({ latlng: L.latLng(latlng) });
+    },
+    // Last point at latlng, then stop adding while keeping the drawn lines
+    endAt: function (latlng) {
+      if (!this._choice) return;
+      this._clicked({ latlng: L.latLng(latlng) });
+      this._pauseMeasure();
+      this.options.events.onToggle(this._choice);
+    },
     onAdd: function(map) {
       this._map = map;
       this._container = L.DomUtil.create('div', 'leaflet-bar');
@@ -186,6 +210,7 @@
       if (!oe) return false;
       var t = oe.target || oe.srcElement;
       if (t && t.closest && t.closest('#ruler, .leaflet-ruler')) return true;
+      if (t && t.closest && this.options.ignoreSelector && t.closest(this.options.ignoreSelector)) return true;
       var x = oe.clientX;
       var y = oe.clientY;
       if ((x == null || y == null) && oe.changedTouches && oe.changedTouches[0]) {

@@ -72,6 +72,7 @@
 	<script src="js/meshmap-linkFunctions.js"></script>
 
 	<script src="js/meshmap-userLocation.js"></script>
+	<script src="js/meshmap-markerMenu.js"></script>
 	<script src="js/meshmap-addressSearch.js"></script>
 
 	<script src="js/meshmap-local-tiles.js"></script>
@@ -448,10 +449,16 @@ var rulerOptions = {
 		lengthUnit: {
 			factor: 0.621371,
 			display: 'Miles',
-			decimal: 3
-		}
+			decimal: 3,
+			label: 'Distance:'
+		},
+		// marker taps add snapped points themselves; menu/control taps are not measurements
+		ignoreSelector: '.leaflet-marker-icon, .meshmap-addr-menu, .leaflet-control'
 	};
-L.control.ruler(rulerOptions).addTo(map);
+var rulerControl = L.control.ruler(rulerOptions).addTo(map);
+if (window.MeshmapMarkerMenu) {
+	MeshmapMarkerMenu.setRuler(rulerControl);
+}
 document.getElementById('ruler').title = 'Ruler\nTap: start → stop (keep) → clear & start again\nESC 1x stop, 2x remove';
 
 //view as list / spreadsheet (node report)
@@ -583,6 +590,10 @@ attributionCtrl.setPrefix('');
 attributionCtrl.addAttribution(MeshMapDetails);
 
 createDeviceMarkers(allDevices);
+if (window.MeshmapMarkerMenu) {
+	MeshmapMarkerMenu.init(map);
+	MeshmapMarkerMenu.attachNodeMarkers(oms.getMarkers(), oms);
+}
 
 //change link lines based on different metrics
 //i am sure there is a much better way to do this

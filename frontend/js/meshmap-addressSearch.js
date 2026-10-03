@@ -20,7 +20,6 @@
   var geocoderUrl = DEFAULT_GEOCODER_URL;
   var markerLayer = null;
   var entries = [];
-  var menuEl = null;
   var toastEl = null;
   var toastTimer = null;
   var addressIcon = null;
@@ -78,6 +77,10 @@
       '</div>'
     );
 
+    MeshmapMarkerMenu.takeOverPopupClick(marker, function () {
+      return L.latLng(entry.lat, entry.lon);
+    });
+
     marker.on('contextmenu', function (e) {
       if (e.originalEvent) L.DomEvent.preventDefault(e.originalEvent);
       marker.closePopup();
@@ -100,23 +103,13 @@
 
   // ----- Context menu -----
 
-  function closeMenu() {
-    if (menuEl && menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
-    menuEl = null;
-  }
-
   function openMenu(entry, point) {
-    closeMenu();
-    var container = map.getContainer();
-    menuEl = L.DomUtil.create('div', 'meshmap-addr-menu', container);
-    menuEl.setAttribute('role', 'menu');
-    L.DomEvent.disableClickPropagation(menuEl);
-    L.DomEvent.disableScrollPropagation(menuEl);
-    L.DomEvent.on(menuEl, 'contextmenu', L.DomEvent.preventDefault);
-
     var latlng = L.latLng(entry.lat, entry.lon);
     var coordText = fmtCoord(entry.lat) + ', ' + fmtCoord(entry.lon);
+    var ruler = MeshmapMarkerMenu.rulerItem(latlng);
     var items = [
+      ruler,
+      ruler ? { separator: true } : null,
       { text: 'Center map here', action: function () { map.panTo(latlng); } },
       { text: 'Copy coordinates', action: function () { copyText(coordText); } },
       { text: 'Copy address', disabled: !entry.label, action: function () { copyText(entry.label); } },
@@ -141,42 +134,7 @@
       { text: 'Remove marker', danger: true, action: function () { removeEntry(entry); } },
     ];
 
-    var header = L.DomUtil.create('div', 'meshmap-addr-menu-header', menuEl);
-    header.textContent = entry.label || coordText;
-    header.title = entry.label || coordText;
-
-    items.forEach(function (item) {
-      if (item.separator) {
-        L.DomUtil.create('div', 'meshmap-addr-menu-sep', menuEl);
-        return;
-      }
-      var btn = L.DomUtil.create(
-        'button',
-        'meshmap-addr-menu-item' + (item.danger ? ' meshmap-addr-menu-danger' : ''),
-        menuEl
-      );
-      btn.type = 'button';
-      btn.setAttribute('role', 'menuitem');
-      btn.textContent = item.text;
-      if (item.disabled) {
-        btn.disabled = true;
-        return;
-      }
-      L.DomEvent.on(btn, 'click', function (ev) {
-        L.DomEvent.stop(ev);
-        closeMenu();
-        item.action();
-      });
-    });
-
-    // Keep the menu inside the map viewport
-    var size = map.getSize();
-    var w = menuEl.offsetWidth;
-    var h = menuEl.offsetHeight;
-    var x = Math.max(4, Math.min(point.x, size.x - w - 4));
-    var y = Math.max(4, Math.min(point.y, size.y - h - 4));
-    menuEl.style.left = x + 'px';
-    menuEl.style.top = y + 'px';
+    MeshmapMarkerMenu.open(point, entry.label || coordText, items);
   }
 
   // ----- Clipboard + toast -----
@@ -425,8 +383,9 @@
   });
 
   function init(leafletMap, mapInfo) {
-    if (!leafletMap || !window.L) return;
+    if (!leafletMap || !window.L || !window.MeshmapMarkerMenu) return;
     map = leafletMap;
+    MeshmapMarkerMenu.init(map);
     if (mapInfo && typeof mapInfo.geocoderUrl === 'string' && mapInfo.geocoderUrl) {
       geocoderUrl = mapInfo.geocoderUrl;
     }
@@ -443,12 +402,7 @@
     var control = new AddressSearchControl().addTo(map);
 
     map.on('click', function () {
-      closeMenu();
       if (control.isExpanded()) control.collapse();
-    });
-    map.on('movestart zoomstart', closeMenu);
-    L.DomEvent.on(document, 'keydown', function (ev) {
-      if (ev.key === 'Escape') closeMenu();
     });
 
     restoreSession();
