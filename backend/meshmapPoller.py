@@ -220,6 +220,10 @@ class NodeInfo:
     antBeam: float = 0.0
     antDesc: str = "Not Available"
     antBuiltin: str = "false"
+    # None when the node owner has not set them (AREDN omits the keys)
+    antAzimuth: Optional[float] = None
+    antElevation: Optional[float] = None
+    antHeight: Optional[float] = None
 
 
 class ConfigManager:
@@ -364,12 +368,27 @@ class MySQLAdapter:
                         `antBeam` DECIMAL(5,2) DEFAULT 0,
                         `antDesc` VARCHAR(255) DEFAULT NULL,
                         `antBuiltin` VARCHAR(10) DEFAULT 'false',
+                        `antAzimuth` DECIMAL(5,1) DEFAULT NULL,
+                        `antElevation` DECIMAL(5,1) DEFAULT NULL,
+                        `antHeight` DECIMAL(7,1) DEFAULT NULL,
                         `response_time_ms` FLOAT DEFAULT 0.0,
                         INDEX `idx_node` (`node`),
                         INDEX `idx_hops` (`hopsAway`),
                         INDEX `idx_last_seen` (`last_seen`)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """)
+
+                # Existing databases predate the antenna position columns
+                for col_def in (
+                    "`antAzimuth` DECIMAL(5,1) DEFAULT NULL",
+                    "`antElevation` DECIMAL(5,1) DEFAULT NULL",
+                    "`antHeight` DECIMAL(7,1) DEFAULT NULL",
+                ):
+                    try:
+                        await cur.execute(f"ALTER TABLE `{sql_db_tbl_node}` ADD COLUMN {col_def}")
+                    except Exception as e:
+                        if "Duplicate column name" not in str(e):
+                            logging.warning(f"Could not add column {col_def.split()[0]} to {sql_db_tbl_node}: {e}")
                 
                 # Create map_info table if not exists
                 await cur.execute(f"""
@@ -454,11 +473,13 @@ class MySQLAdapter:
                         lat, lon, wifi_mac_address, api_version, board_id,
                         firmware_mfg, grid_square, lan_ip, services, description,
                         mesh_supernode, mesh_gateway, freq, link_info, hopsAway,
-                        meshRF, last_seen, antGain, antBeam, antDesc, antBuiltin, response_time_ms
+                        meshRF, last_seen, antGain, antBeam, antDesc, antBuiltin, response_time_ms,
+                        antAzimuth, antElevation, antHeight
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s
                     ) ON DUPLICATE KEY UPDATE
                         node=%s, uptime=%s, loadavg=%s, model=%s, firmware_version=%s,
                         ssid=%s, channel=%s, chanbw=%s, tunnel_installed=%s,
@@ -467,7 +488,8 @@ class MySQLAdapter:
                         lan_ip=%s, services=%s, description=%s, mesh_supernode=%s,
                         mesh_gateway=%s, freq=%s, link_info=COALESCE(%s, link_info), hopsAway=%s,
                         meshRF=%s, last_seen=%s, antGain=%s, antBeam=%s,
-                        antDesc=%s, antBuiltin=%s, response_time_ms=%s
+                        antDesc=%s, antBuiltin=%s, response_time_ms=%s,
+                        antAzimuth=%s, antElevation=%s, antHeight=%s
                 """
 
                 values = (
@@ -482,6 +504,7 @@ class MySQLAdapter:
                     link_info_insert, node_data.hopsAway, node_data.meshRF,
                     last_seen_val, node_data.antGain, node_data.antBeam, node_data.antDesc,
                     node_data.antBuiltin, node_data.response_time_ms,
+                    node_data.antAzimuth, node_data.antElevation, node_data.antHeight,
                     node_data.node, node_data.uptime, loadavg, node_data.model,
                     node_data.firmware_version, node_data.ssid, node_data.channel,
                     node_data.chanbw, node_data.tunnel_installed,
@@ -492,7 +515,8 @@ class MySQLAdapter:
                     node_data.mesh_supernode, node_data.mesh_gateway, node_data.freq,
                     link_info_update, node_data.hopsAway, node_data.meshRF,
                     last_seen_val, node_data.antGain, node_data.antBeam, node_data.antDesc,
-                    node_data.antBuiltin, node_data.response_time_ms
+                    node_data.antBuiltin, node_data.response_time_ms,
+                    node_data.antAzimuth, node_data.antElevation, node_data.antHeight
                 )
 
                 try:
@@ -802,6 +826,9 @@ class NodePoller:
                 node_info.channel = str(value.get('channel', 'None'))
                 node_info.chanbw = str(value.get('chanbw', 'None'))
                 node_info.freq = str(value.get('freq', 'None'))
+                node_info.antAzimuth = self._optional_float(value.get('azimuth'))
+                node_info.antElevation = self._optional_float(value.get('elevation'))
+                node_info.antHeight = self._optional_float(value.get('height'))
                 
                 # Parse antenna info
                 if 'antenna' in value and isinstance(value['antenna'], dict):
@@ -849,6 +876,15 @@ class NodePoller:
                 node_info.mesh_supernode = 'true' if value in [1, '1', True, 'true'] else 'false'
         
         return node_info
+
+    @staticmethod
+    def _optional_float(value: Any) -> Optional[float]:
+        if value is None or value == '':
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
 
 # ============================================================================
@@ -1857,6 +1893,9 @@ class MeshPollingDaemon:
                     'antGain': node.get('antGain', 0),
                     'antBeam': node.get('antBeam', 0),
                     'antDesc': node.get('antDesc', 'Not Available'),
+                    'antAzimuth': NodePoller._optional_float(node.get('antAzimuth')),
+                    'antElevation': NodePoller._optional_float(node.get('antElevation')),
+                    'antHeight': NodePoller._optional_float(node.get('antHeight')),
                     'mesh_supernode': node.get('mesh_supernode', 'false'),
                     'mesh_gateway': node.get('mesh_gateway', 'false'),
                     'last_seen': last_seen,
@@ -2230,6 +2269,9 @@ async def _flush_database(config: ConfigManager):
                     `antBeam` DECIMAL(5,2) DEFAULT 0,
                     `antDesc` VARCHAR(255) DEFAULT NULL,
                     `antBuiltin` VARCHAR(10) DEFAULT 'false',
+                    `antAzimuth` DECIMAL(5,1) DEFAULT NULL,
+                    `antElevation` DECIMAL(5,1) DEFAULT NULL,
+                    `antHeight` DECIMAL(7,1) DEFAULT NULL,
                     `response_time_ms` FLOAT DEFAULT 0.0,
                     INDEX `idx_node` (`node`),
                     INDEX `idx_hops` (`hopsAway`),

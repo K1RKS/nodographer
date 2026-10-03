@@ -46,12 +46,17 @@ function createNodePopup(device, options) {
 	}
 	channelInfo += ' , Bandwidth: ' + device.chanbw;
 	
+	var meshIpLine = device.wlan_ip ? "<br>Mesh IP: " + device.wlan_ip : "";
+	var antPosition = formatAntennaPosition(device);
+	var antPositionLine = antPosition ? "<br>" + antPosition : "";
+	
 	return "<div class='popupTabs'><div class='popupTab' id='popupMain'><div class='popupTabContent'><NodeTitle><a href='http://" +
 		device.node + ".local.mesh' target='_blank' rel='noopener'>" + device.node + "</a></NodeTitle>" +
-		"<br>" + device.lat + ", " + device.lon + "<br>" + device.ssid +
+		"<br>" + device.lat + ", " + device.lon + meshIpLine + "<br>" + device.ssid +
 		"<br>" + channelInfo +
 		"<br>" + device.model + "<br>Firmware: " + device.firmware_version +
 		"<br>Antenna: " + device.antDesc + " Gain: " + device.antGain + " Beam: " + device.antBeam + "&deg;" +
+		antPositionLine +
 		"<br>Last Polled: " + localTime.toLocaleString() + "<br>Uptime: " + device.uptime +
 		"<br>Load Avg: 1min " + device.loadavg[0] + ", 5min " + device.loadavg[1] + ", 15min " + device.loadavg[2] +
 		"<br>" + device.hopsAway + " hops away from " + hopSource + "</div></div>" +
@@ -69,6 +74,28 @@ function createNodePopup(device, options) {
 		"<ul class='popupTabs-link'><li class='popupTab-link'><a href='#popupTab-Main'><span>Main</span></a></li><li class='popupTab-link'>" +
 		"<a href='#popupTab-Services'><span>Services</span></a></li><li class='popupTab-link''><a href='#popupTab-Links'><span>Links</span></a></li><li class='popupTab-link'><a href='#popupTab-Info'><span>Info</span></a></li></ul>" +
 		"</div>";
+}
+
+/**
+ * Azimuth / elevation / height line for the popup, listing only values the node owner set.
+ * Null or missing means unset; 0 is a real value (due north, level, ground).
+ * @param {Object} device - Node device object
+ * @returns {string} HTML fragment, or '' when nothing is set
+ */
+function formatAntennaPosition(device) {
+	var parts = [];
+	var num = function (v) {
+		if (v === null || v === undefined || v === '') return null;
+		var n = Number(v);
+		return isFinite(n) ? n : null;
+	};
+	var az = num(device.antAzimuth);
+	var el = num(device.antElevation);
+	var ht = num(device.antHeight);
+	if (az !== null) parts.push("Azimuth: " + az + "&deg;");
+	if (el !== null) parts.push("Elevation: " + el + "&deg;");
+	if (ht !== null) parts.push("Height: " + ht + " m (" + Math.round(ht * 3.28084) + " ft)");
+	return parts.join(" ");
 }
 
 /**
