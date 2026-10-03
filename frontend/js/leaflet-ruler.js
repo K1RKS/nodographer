@@ -248,7 +248,12 @@
         } else {
           text = '<b>' + this.options.angleUnit.label + '</b>&nbsp;' + this._result.Bearing.toFixed(this.options.angleUnit.decimal) + '&nbsp;' + this.options.angleUnit.display + '<br><b>' + this.options.lengthUnit.label + '</b>&nbsp;' + this._result.Distance.toFixed(this.options.lengthUnit.decimal) + '&nbsp;' +  this.options.lengthUnit.display;
         }
-        L.circleMarker(e.latlng, this.options.circleMarker).bindTooltip(text, {permanent: true, className: 'result-tooltip'}).addTo(this._pointLayer).openTooltip();
+        // Label the finished leg at its midpoint (projected, so it sits on the drawn straight line)
+        var mid = this._map.unproject(this._map.project(prev).add(this._map.project(e.latlng)).divideBy(2));
+        L.tooltip({permanent: true, direction: 'center', interactive: false, className: 'result-tooltip'})
+          .setLatLng(mid)
+          .setContent(text)
+          .addTo(this._pointLayer);
       }
 
       this._clickedLatLong = e.latlng;
