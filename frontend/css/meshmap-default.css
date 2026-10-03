@@ -397,6 +397,16 @@ MAP_DETAILS {
 	clear: both;
 	margin: 3px 0;
 }
+/* Unpolled / simple popups: in-flow so Leaflet can size width (tab panes are absolute). */
+.popupSimple {
+	background: #f8f8f8;
+	padding: 10px 8px;
+	border-radius: 15px;
+	min-width: 220px;
+	max-width: 100%;
+	word-wrap: break-word;
+	overflow-wrap: anywhere;
+}
 .popupTab {
 	float: left;
 	display: none;

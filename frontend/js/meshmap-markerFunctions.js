@@ -199,8 +199,10 @@ function meshmapBindPopupOptions() {
 	if (window.MeshmapMobile && typeof MeshmapMobile.popupOptions === 'function') {
 		return MeshmapMobile.popupOptions();
 	}
+	var maxW = Math.min(350, Math.max(220, window.innerWidth - 32));
 	return {
-		maxWidth: Math.min(350, Math.max(220, window.innerWidth - 32)),
+		maxWidth: maxW,
+		minWidth: Math.min(220, maxW),
 		autoPan: true,
 		autoPanPadding: [48, 48],
 		keepInView: true
@@ -370,11 +372,10 @@ function createGhostMarkers(allDevices) {
 	for (var hostname in ghostNodes) {
 		if (!ghostNodes.hasOwnProperty(hostname)) continue;
 		var ghost = ghostNodes[hostname];
-		var popup = "<div class='popupTabs'><div class='popupTab' id='popupMain'><div class='popupTabContent'>" +
-			"<NodeTitle>" + hostname + " (unpolled)</NodeTitle><br>" +
+		var popup = "<div class='popupSimple'><NodeTitle>" + hostname + " (unpolled)</NodeTitle><br>" +
 			ghost.lat + ", " + ghost.lon + "<br>" +
 			"This node was discovered via links but could not be polled directly." +
-			"</div></div></div>";
+			"</div>";
 		
 		oms.addMarker(L.marker([ghost.lat, ghost.lon], {
 			icon: ghostMarkerIcon,

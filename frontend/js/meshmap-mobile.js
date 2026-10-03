@@ -81,6 +81,7 @@
     var maxW = Math.min(350, Math.max(220, window.innerWidth - 32));
     return {
       maxWidth: maxW,
+      minWidth: Math.min(220, maxW),
       autoPan: true,
       autoPanPadding: [pad, pad],
       keepInView: true
@@ -93,7 +94,7 @@
       var root = e.popup && e.popup.getElement ? e.popup.getElement() : null;
       if (!root || !window.L) return;
       var panes = root.querySelectorAll(
-        '.popupTabContent, .popupTabContent-fw, .leaflet-popup-content'
+        '.popupTabContent, .popupTabContent-fw, .popupSimple, .leaflet-popup-content'
       );
       for (var i = 0; i < panes.length; i++) {
         L.DomEvent.disableClickPropagation(panes[i]);
