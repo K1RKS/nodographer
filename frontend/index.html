@@ -24,6 +24,7 @@
 <html lang="en-US" data-theme="light">
 <head>
 	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 	<meta http-equiv="refresh" content="600">
         <link rel="icon" type="image/x-icon" href="images/meshmap.png">
 	
@@ -63,10 +64,6 @@
 	<script src="js/leaflet-ruler.js"></script>
 	<link rel="stylesheet" href="css/leaflet-ruler.css">
 
-	<!- testing elevation stuff -->
-	<link rel="stylesheet" href="https://unpkg.com/@raruto/leaflet-elevation/dist/leaflet-elevation.css" />
-	<script src="https://unpkg.com/@raruto/leaflet-elevation/dist/leaflet-elevation.js"></script>
-	
 	<!-- local custom stuff. now with more java! -->
 	<link rel="stylesheet" href="css/meshmap-default.css">
 	<script src="js/meshmap-legend.js"></script>
@@ -75,9 +72,12 @@
 	<script src="js/meshmap-linkFunctions.js"></script>
 
 	<script src="js/meshmap-userLocation.js"></script>
+	<script src="js/meshmap-markerMenu.js"></script>
+	<script src="js/meshmap-addressSearch.js"></script>
 
 	<script src="js/meshmap-local-tiles.js"></script>
 	<script src="js/meshmap-session.js"></script>
+	<script src="js/meshmap-mobile.js"></script>
 
 </head>
 <body>
@@ -186,51 +186,6 @@ function initializeMap() {
 			}
 		}
 	}
-
-	/*
-	 * Elevation plugin options (currently unused). Leaving these here caused
-	 * a syntax error because they were not inside an object literal. Commented
-	 * out to keep the page loading cleanly.
-	 *
-	 * followMarker: true,
-	 * autofitBounds: true,
-	 * imperial: false,
-	 * reverseCoords: false,
-	 * acceleration: false,
-	 * slope: false,
-	 * speed: false,
-	 * altitude: true,
-	 * time: true,
-	 */
-
-	/*
-	 * Elevation plugin options (unused). Keeping commented so they don't break
-	 * the surrounding script until the feature is wired in.
-	 *
-	 * distance: true,
-	 * summary: 'multiline',
-	 * downloadLink: 'link',
-	 * ruler: true,
-	 * legend: true,
-	 * almostOver: true,
-	 * distanceMarkers: false,
-	 * edgeScale: false,
-	 * hotline: true,
-	 * timestamps: false,
-	 * waypoints: true,
-	 * wptIcons: {
-	 *   '': L.divIcon({
-	 *     className: 'elevation-waypoint-marker',
-	 *     html: '<i class="elevation-waypoint-icon"></i>',
-	 *     iconSize: [30, 30],
-	 *     iconAnchor: [8, 30],
-	 *   }),
-	 * },
-	 * wptLabels: true,
-	 * preferCanvas: true,
-	 */
-
-	// END ELEVATION TEST
 
 //Update page Title
 document.title = mapInfo.title;
@@ -468,40 +423,58 @@ L.control.search({
 	initial: false,
 	zoom: 16,
 	position: 'verticalcenterleft',
-	hideMarkerOnCollapse: true
+	hideMarkerOnCollapse: true,
+	autoCollapse: true
 }).addTo(map);
 
-//the ruler
+//address search (geocoder) with session-persistent markers
+if (window.MeshmapAddressSearch) {
+	MeshmapAddressSearch.init(map, mapInfo);
+}
+
+//the ruler (visible on desktop and mobile)
 var rulerOptions = {
 		position: 'verticalcenterleft',
+		circleMarker: {
+			color: 'red',
+			radius: 6,
+			weight: 2,
+			fillOpacity: 1
+		},
+		lineStyle: {
+			color: 'red',
+			dashArray: '1,6',
+			weight: 3
+		},
 		lengthUnit: {
 			factor: 0.621371,
 			display: 'Miles',
-			decimal: 3
-		}
+			decimal: 3,
+			label: 'Distance:'
+		},
+		// marker taps add snapped points themselves; menu/control taps are not measurements
+		ignoreSelector: '.leaflet-marker-icon, .meshmap-addr-menu, .leaflet-control'
 	};
-L.control.ruler(rulerOptions).addTo(map);
-document.getElementById('ruler').title = 'Ruler\n(ESC 1x to stop, 2x to remove)';
+var rulerControl = L.control.ruler(rulerOptions).addTo(map);
+if (window.MeshmapMarkerMenu) {
+	MeshmapMarkerMenu.setRuler(rulerControl);
+}
+document.getElementById('ruler').title = 'Ruler\nTap: start → stop (keep) → clear & start again\nESC 1x stop, 2x remove';
 
-//view as list (node_report.php)
+//view as list / spreadsheet (node report)
 L.Control.viewAsList = L.Control.extend({
 	options: {
 		position: 'verticalcenterleft'
 	},
 	onAdd: function(map) {
-		var viewAsListControl = L.DomUtil.create('div', 'leaflet-control-custom leaflet-bar');
+		var viewAsListControl = L.DomUtil.create('div', 'leaflet-control-custom leaflet-bar meshmap-view-as-list');
 		viewAsListControl.style.backgroundColor = 'white';
-		viewAsListControl.style.width = '30px';
-		viewAsListControl.style.height = '30px';
-		viewAsListControl.title = 'View as list (node report)';
+		viewAsListControl.title = 'View as spreadsheet / table (node report)';
 		var link = L.DomUtil.create('a', 'leaflet-bar-part leaflet-bar-part-single', viewAsListControl);
+		link.href = 'node_report/index.html';
+		link.setAttribute('aria-label', 'View as spreadsheet / table');
 		var listIcon = L.DomUtil.create('div', 'viewAsListControl', link);
-		listIcon.style.fontSize = '20px';
-		listIcon.style.verticalAlign = 'middle';
-
-		viewAsListControl.onclick = function() {
-			window.location = "node_report/index.html"
-		}
+		L.DomEvent.disableClickPropagation(viewAsListControl);
 		return viewAsListControl;
 	}
 });
@@ -518,6 +491,11 @@ layerControls = L.control.groupedLayers(baseLayers, groupedOverlays, {exclusiveG
 //layerControls.addTo(map);
 L.DomEvent.disableClickPropagation(layerControls._container);
 L.DomEvent.disableScrollPropagation(layerControls._container);
+
+// Mobile / tablet chrome: invalidateSize, layer auto-collapse, legend default
+if (window.MeshmapMobile) {
+	MeshmapMobile.enhanceMap(map, layerControls);
+}
 
 // Persist tileserver + view + overlays for this browser tab session
 if (window.MeshmapSession) {
@@ -612,6 +590,10 @@ attributionCtrl.setPrefix('');
 attributionCtrl.addAttribution(MeshMapDetails);
 
 createDeviceMarkers(allDevices);
+if (window.MeshmapMarkerMenu) {
+	MeshmapMarkerMenu.init(map);
+	MeshmapMarkerMenu.attachNodeMarkers(oms.getMarkers(), oms);
+}
 
 //change link lines based on different metrics
 //i am sure there is a much better way to do this

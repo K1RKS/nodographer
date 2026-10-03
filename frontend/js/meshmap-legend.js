@@ -17,6 +17,8 @@ legend.onAdd = function (map) {
 		'<div id="legendGradientRectangle">10&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;TX Rate (mbps)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;100</div>' +
 		'<div id="legendDTDLink">DTD</div>' +
 		'<div id="legendTunnelLink">Tunnel</div>' +
+		'<div id="darkModeToggle"><input id="darkModeCheckBox" type="checkbox" name="darkMode" data-theme-toggle />' +
+		'<label for="darkModeCheckBox">Dark</label></div>' +
 		'<div id="legendMapOrigin"><img class="legendBandIcon" src="images/mapMarkers/pulse.svg">Map Origin</div>' +
 		'<div id="legendUnknownOther">' +
 		'<img class="legendBandIcon" src="images/mapMarkers/greyRadioCircle-icon.png">Non RF' +
@@ -34,8 +36,6 @@ legend.onAdd = function (map) {
 		'<img class="legendBandIcon" src="images/mapMarkers/goldRadioCircle-icon.png">5GHz' +
 		'</div>' +
 		'<div id="legendHide"><button id="legendLinkButton" onclick="hideLegend()">Hide</button></div>' +
-		'<div id="darkModeToggle"><input id="darkModeCheckBox" type="checkbox" name="darkMode" data-theme-toggle />' +
-		'<label for="darkModeCheckBox">Dark</label></div>' +
 		'</div>';
 	return div;
 };

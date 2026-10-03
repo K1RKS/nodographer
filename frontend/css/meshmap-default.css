@@ -103,9 +103,85 @@ body {
 	/*width: 100%;*/
 }
 /*** this is the size of the map itself ***/
+html, body {
+	height: 100%;
+	height: 100dvh;
+	margin: 0;
+	padding: 0;
+	overflow: hidden;
+	overscroll-behavior: none;
+}
 #map {
-	/*width: 100vh;*/
-	height: 100vh;
+	width: 100%;
+	height: 100%;
+	height: 100dvh;
+	overflow: hidden;
+	touch-action: none;
+}
+.leaflet-container.leaflet-touch-drag.leaflet-touch-zoom,
+.leaflet-container {
+	touch-action: none;
+}
+
+/* Mid-screen control corners (used by verticalcenterleft / right) */
+.leaflet-verticalcenter {
+	position: absolute;
+	z-index: 1000;
+	pointer-events: none;
+	top: 50%;
+	transform: translateY(-50%);
+}
+.leaflet-verticalcenter .leaflet-control {
+	pointer-events: auto;
+	margin-top: 6px;
+	margin-bottom: 6px;
+}
+.leaflet-left.leaflet-verticalcenter {
+	left: 0;
+	padding-left: max(0px, env(safe-area-inset-left, 0px));
+}
+
+/* Short landscape: top-align the left rail so it can be dragged to reveal cut-off icons */
+@media (max-height: 560px) {
+	.leaflet-left.leaflet-verticalcenter {
+		top: max(6px, env(safe-area-inset-top, 0px));
+		bottom: auto;
+		transform: none;
+		pointer-events: auto;
+		touch-action: none;
+		max-height: none;
+		overflow: visible;
+	}
+	.leaflet-left.leaflet-verticalcenter.meshmap-rail-overflow {
+		cursor: ns-resize;
+	}
+}
+.leaflet-right.leaflet-verticalcenter {
+	right: 0;
+	padding-right: max(0px, env(safe-area-inset-right, 0px));
+}
+
+/* Safe areas for standard Leaflet corners */
+.leaflet-top {
+	top: env(safe-area-inset-top, 0px);
+}
+.leaflet-bottom {
+	bottom: env(safe-area-inset-bottom, 0px);
+}
+.leaflet-left {
+	left: env(safe-area-inset-left, 0px);
+}
+.leaflet-right {
+	right: env(safe-area-inset-right, 0px);
+}
+
+.leaflet-bar a,
+.leaflet-control-layers-toggle,
+.leaflet-control a,
+.meshmap-view-as-list,
+#legendLinkButton,
+#legendLinkButtonHidden {
+	touch-action: manipulation;
 }
 h1 {
     color: navy;
@@ -289,15 +365,26 @@ MAP_DETAILS {
     display: inline;
 }
 .leaflet-control-layers-expanded, .leaflet-control-layers-list {
-    height: 500px !important;
-    overflow: hidden !important;
-    width: 140px;
+	height: auto;
+	max-height: min(70vh, 500px);
+	overflow-x: hidden;
+	overflow-y: auto;
+	width: 140px;
+	touch-action: pan-y;
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
 }
 
 /** New stuff for the popup tabs **/
 .leaflet-popup-content{
-	width: 350px;
+	width: auto;
+	max-width: min(350px, calc(100vw - 32px));
 	margin: 3px 3px;
+	max-height: min(60vh, 420px);
+	overflow-y: auto;
+	touch-action: pan-y;
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
 }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip {
 	background: #0000009c !important;
@@ -309,6 +396,16 @@ MAP_DETAILS {
 	min-height: 250px;
 	clear: both;
 	margin: 3px 0;
+}
+/* Unpolled / simple popups: in-flow so Leaflet can size width (tab panes are absolute). */
+.popupSimple {
+	background: #f8f8f8;
+	padding: 10px 8px;
+	border-radius: 15px;
+	min-width: 220px;
+	max-width: 100%;
+	word-wrap: break-word;
+	overflow-wrap: anywhere;
 }
 .popupTab {
 	float: left;
@@ -414,9 +511,10 @@ MAP_DETAILS {
 .viewAsListControl{
   height: 30px;
   width: 30px;
-  background-image: url("../images/list-icon.png");
+  background-image: url("../images/spreadsheet-icon.svg");
   background-repeat: no-repeat;
   background-position: center;
+  background-size: 20px 20px;
 }
 .leaflet-ruler {
 	height: 30px !important;
@@ -425,6 +523,10 @@ MAP_DETAILS {
 .leaflet-control-layers-toggle {
 	height: 30px !important;
 	width: 30px !important;
+}
+.meshmap-view-as-list {
+	width: 30px;
+	height: 30px;
 }
 .linkPopupContent {
 	background-color: #f8f8f8;
@@ -450,11 +552,12 @@ MAP_DETAILS {
 	font-size: 1em;
 	text-align: center;
 	z-index: 9999;
-	top: 2px;
+	top: max(2px, env(safe-area-inset-top, 0px));
 	left: 50%;
-	right: 50%;
+	transform: translateX(-50%);
 	border-radius: 5px;
 	visibility: hidden;
+	pointer-events: none;
 }
 
 .leaflet-control-layers-toggle {
@@ -464,11 +567,371 @@ MAP_DETAILS {
 .leaflet-ruler {
 	background-image: url("../images/ruler-icon.png");
 }
-.leaflet-ruler:hover {
+.leaflet-ruler:hover,
+.leaflet-ruler-clicked,
+.leaflet-ruler-paused {
 	background-image: url("../images/ruler-icon-colored.png");
 }
+.leaflet-ruler-clicked {
+	border-color: chartreuse !important;
+}
+.leaflet-ruler-paused {
+	border-color: orange !important;
+}
 .attribution {
-	font-weight: bold,
+	font-weight: bold;
 	color: inherit;
 	text-decoration: none;
+}
+
+/* ----- Address search ----- */
+.meshmap-addr-search {
+	position: relative;
+	background: #fff;
+}
+.leaflet-bar a.meshmap-addr-search-button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	height: 30px;
+	color: #333;
+	border-bottom: none;
+}
+.meshmap-addr-search-expanded a.meshmap-addr-search-button {
+	color: #d4002a;
+}
+.meshmap-addr-search-panel {
+	display: none;
+	position: absolute;
+	top: -2px;
+	left: calc(100% + 6px);
+	width: 280px;
+	max-width: calc(100vw - 70px);
+	background: #fff;
+	border: 2px solid rgba(0,0,0,0.2);
+	border-radius: 4px;
+	background-clip: padding-box;
+	box-shadow: 0 1px 5px rgba(0,0,0,0.25);
+	font: 13px/1.35 "Helvetica Neue", Arial, Helvetica, sans-serif;
+	color: #222;
+}
+.meshmap-addr-search-expanded .meshmap-addr-search-panel {
+	display: block;
+}
+.meshmap-addr-search-form {
+	margin: 0;
+	padding: 4px;
+}
+.meshmap-addr-search-input {
+	box-sizing: border-box;
+	width: 100%;
+	padding: 5px 7px;
+	border: 1px solid #bbb;
+	border-radius: 3px;
+	font-size: 14px;
+	color: inherit;
+	background: #fff;
+}
+.meshmap-addr-search-message:empty {
+	display: none;
+}
+.meshmap-addr-search-message {
+	padding: 2px 8px 6px;
+	color: #555;
+}
+.meshmap-addr-search-message.meshmap-addr-search-error {
+	color: #b00020;
+}
+.meshmap-addr-search-results {
+	list-style: none;
+	margin: 0;
+	padding: 0 0 4px;
+	max-height: 40vh;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+.meshmap-addr-search-results:empty {
+	display: none;
+}
+.meshmap-addr-search-result {
+	padding: 6px 8px;
+	border-top: 1px solid #eee;
+	cursor: pointer;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+}
+.meshmap-addr-search-result:hover,
+.meshmap-addr-search-result:focus {
+	background: #eef4ff;
+	outline: none;
+}
+.meshmap-addr-marker {
+	-webkit-touch-callout: none;
+}
+.meshmap-addr-popup {
+	background: #f8f8f8;
+	color: #222;
+	padding: 10px 12px;
+	border-radius: 12px;
+	min-width: 200px;
+	overflow-wrap: anywhere;
+}
+.meshmap-addr-popup-label {
+	font-weight: bold;
+	margin-bottom: 4px;
+}
+.meshmap-addr-popup-coords {
+	font-family: monospace;
+}
+.meshmap-addr-popup-hint {
+	margin-top: 6px;
+	font-size: 11px;
+	color: #777;
+}
+.meshmap-addr-menu {
+	position: absolute;
+	z-index: 1100;
+	min-width: 190px;
+	max-width: 280px;
+	padding: 4px 0;
+	background: #fff;
+	color: #222;
+	border: 1px solid rgba(0,0,0,0.2);
+	border-radius: 6px;
+	box-shadow: 0 3px 12px rgba(0,0,0,0.3);
+	font: 13px/1.3 "Helvetica Neue", Arial, Helvetica, sans-serif;
+	user-select: none;
+	-webkit-user-select: none;
+}
+.meshmap-addr-menu-header {
+	padding: 4px 12px 6px;
+	font-size: 11px;
+	color: #666;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	border-bottom: 1px solid #eee;
+	margin-bottom: 2px;
+}
+.meshmap-addr-menu-item {
+	display: block;
+	width: 100%;
+	padding: 7px 12px;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.meshmap-addr-menu-item:hover,
+.meshmap-addr-menu-item:focus {
+	background: #eef4ff;
+	outline: none;
+}
+.meshmap-addr-menu-item:disabled {
+	color: #aaa;
+	cursor: default;
+	background: none;
+}
+.meshmap-addr-menu-danger {
+	color: #b00020;
+}
+.meshmap-addr-menu-sep {
+	height: 1px;
+	margin: 4px 0;
+	background: #eee;
+}
+.meshmap-addr-toast {
+	position: absolute;
+	z-index: 1100;
+	left: 50%;
+	bottom: calc(40px + env(safe-area-inset-bottom, 0px));
+	transform: translateX(-50%);
+	max-width: 80vw;
+	padding: 6px 14px;
+	border-radius: 14px;
+	background: rgba(0,0,0,0.75);
+	color: #fff;
+	font: 13px/1.3 "Helvetica Neue", Arial, Helvetica, sans-serif;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.2s;
+	word-break: break-all;
+}
+.meshmap-addr-toast-visible {
+	opacity: 1;
+}
+[data-theme="dark"] {
+	.meshmap-addr-search,
+	.meshmap-addr-search-panel,
+	.meshmap-addr-menu,
+	.meshmap-addr-popup {
+		background: #2b2b2b;
+		color: #e6e6e6;
+		border-color: rgba(255,255,255,0.2);
+	}
+	.leaflet-bar a.meshmap-addr-search-button {
+		background: #2b2b2b;
+		color: #e6e6e6;
+	}
+	.meshmap-addr-search-expanded a.meshmap-addr-search-button {
+		color: #ff5c7a;
+	}
+	.meshmap-addr-search-input {
+		background: #1e1e1e;
+		border-color: #555;
+	}
+	.meshmap-addr-search-message {
+		color: #bbb;
+	}
+	.meshmap-addr-search-message.meshmap-addr-search-error,
+	.meshmap-addr-menu-danger {
+		color: #ff7a8f;
+	}
+	.meshmap-addr-search-result,
+	.meshmap-addr-menu-header,
+	.meshmap-addr-menu-sep {
+		border-color: #444;
+	}
+	.meshmap-addr-menu-sep {
+		background: #444;
+	}
+	.meshmap-addr-menu-header,
+	.meshmap-addr-popup-hint {
+		color: #aaa;
+	}
+	.meshmap-addr-search-result:hover,
+	.meshmap-addr-search-result:focus,
+	.meshmap-addr-menu-item:hover,
+	.meshmap-addr-menu-item:focus {
+		background: #3a4558;
+	}
+	.meshmap-addr-menu-item:disabled {
+		color: #666;
+	}
+}
+
+/* ----- Mobile / tablet ----- */
+@media (pointer: coarse), (max-width: 900px) {
+	.leaflet-bar a,
+	.leaflet-control-layers-toggle,
+	.meshmap-view-as-list,
+	.leaflet-ruler {
+		min-width: 44px !important;
+		min-height: 44px !important;
+		width: 44px !important;
+		height: 44px !important;
+		line-height: 44px !important;
+	}
+	.viewAsListControl {
+		width: 44px;
+		height: 44px;
+		background-size: 26px 26px;
+	}
+	.leaflet-control-layers-toggle {
+		background-size: 28px 28px !important;
+	}
+	.leaflet-ruler {
+		background-size: 28px 28px !important;
+	}
+	#legendLinkButtonHidden,
+	#legendLinkButton {
+		min-height: 44px;
+		min-width: 44px;
+		padding: 8px 10px !important;
+		font-size: 16px !important;
+	}
+}
+
+@media (max-width: 700px) {
+	.leaflet-control-layers-expanded,
+	.leaflet-control-layers-list {
+		width: min(90vw, 280px) !important;
+		max-height: min(50dvh, 360px) !important;
+		height: auto !important;
+		overflow-y: auto !important;
+	}
+	.leaflet-control-layers label {
+		padding: 8px 4px;
+		font-size: 16px;
+	}
+
+	.leaflet-control-scale {
+		display: none;
+	}
+	.leaflet-control-attribution {
+		max-width: min(100vw - 16px, 360px);
+		font-size: 10px;
+		line-height: 1.25;
+	}
+
+	.popupTabs,
+	.popupTabs-nonmesh,
+	.popupTabs-fw {
+		/* Absolute .popupTabContent needs a real height box to scroll inside */
+		min-height: min(48dvh, 320px) !important;
+		height: min(48dvh, 320px);
+		max-height: min(52dvh, 340px);
+	}
+	.popupTabs-link {
+		left: 0;
+		height: auto;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		z-index: 2;
+	}
+	/* Inner tab pane is the scroll surface (not the outer leaflet content) */
+	.leaflet-popup-content {
+		max-height: none;
+		overflow: visible;
+	}
+	.popupTabContent,
+	.popupTabContent-fw {
+		touch-action: pan-y;
+		overscroll-behavior: contain;
+		-webkit-overflow-scrolling: touch;
+	}
+
+	.leaflet-control-search.search-exp {
+		width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) !important;
+		max-width: calc(100vw - 24px);
+	}
+	.leaflet-control-search input,
+	.meshmap-addr-search-input {
+		font-size: 16px !important;
+	}
+	.meshmap-addr-menu-item {
+		padding: 10px 14px;
+		font-size: 15px;
+	}
+	.leaflet-control-search .search-tooltip {
+		max-height: 40vh !important;
+		overflow-y: auto;
+		touch-action: pan-y;
+		overscroll-behavior: contain;
+	}
+
+	#spiderfyActive {
+		width: auto;
+		max-width: 70vw;
+		padding: 2px 10px;
+		font-size: 0.85em;
+	}
+
+	#legend {
+		width: min(200px, calc(100vw - 24px));
+		max-width: calc(100vw - 24px);
+	}
+}
+
+@media (max-width: 480px) {
+	.leaflet-control-attribution {
+		max-width: calc(100vw - 12px);
+	}
 }
