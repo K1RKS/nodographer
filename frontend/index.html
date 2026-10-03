@@ -72,6 +72,7 @@
 	<script src="js/meshmap-linkFunctions.js"></script>
 
 	<script src="js/meshmap-userLocation.js"></script>
+	<script src="js/meshmap-addressSearch.js"></script>
 
 	<script src="js/meshmap-local-tiles.js"></script>
 	<script src="js/meshmap-session.js"></script>
@@ -424,6 +425,11 @@ L.control.search({
 	hideMarkerOnCollapse: true,
 	autoCollapse: true
 }).addTo(map);
+
+//address search (geocoder) with session-persistent markers
+if (window.MeshmapAddressSearch) {
+	MeshmapAddressSearch.init(map, mapInfo);
+}
 
 //the ruler (visible on desktop and mobile)
 var rulerOptions = {
