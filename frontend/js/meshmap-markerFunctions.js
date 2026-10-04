@@ -29,13 +29,16 @@ function getSysinfoUrl(nodeName, protocol, queryParams) {
  * @param {Object} device - Node device object with all properties
  * @param {Object} options - Optional settings
  * @param {boolean} options.showFreq - Whether to show frequency in MHz (default: true)
- * @param {string} options.hopSource - Reference node for hop count (default: 'ai7bq-eugene-main')
+ * @param {string} options.hopSource - Reference node for hop count (default: poller's nodelistNode from settings.toml)
  * @returns {string} Complete HTML for popup with tabs (Main, Services, Links, Info)
  */
 function createNodePopup(device, options) {
 	options = options || {};
 	var showFreq = options.showFreq !== false; // default true
-	var hopSource = options.hopSource || 'ai7bq-eugene-main';
+	var hopSource = options.hopSource || defaultHopSource();
+	// 0 also means "not measured" (hop counting off or traceroute failed), so it is not shown
+	var hops = Number(device.hopsAway);
+	var hopsLine = hops > 0 ? "<br>" + hops + (hops === 1 ? " hop" : " hops") + " away from " + hopSource : "";
 	
 	var localTime = parseUTCTimestamp(device.last_seen);
 	
@@ -59,7 +62,7 @@ function createNodePopup(device, options) {
 		antPositionLine +
 		"<br>Last Polled: " + localTime.toLocaleString() + "<br>Uptime: " + device.uptime +
 		"<br>Load Avg: 1min " + device.loadavg[0] + ", 5min " + device.loadavg[1] + ", 15min " + device.loadavg[2] +
-		"<br>" + device.hopsAway + " hops away from " + hopSource + "</div></div>" +
+		hopsLine + "</div></div>" +
 		"<div class='popupTab' id='popupTab-Services'><div class='popupTabContent'><br>" + createServiceList(device.services) + "</div></div>" +
 		"<div class='popupTab' id='popupTab-Links'><div class='popupTabContent'><br>" + createLinkList(device.link_info) + "</div></div>" +
 		"<div class='popupTab' id='popupTab-Info'><div class='popupTabContent'><br><a href='http://" + device.node + ".local.mesh/cgi-bin/metrics' target='_blank'>Prometheus Metrics</a><br>" +
@@ -74,6 +77,16 @@ function createNodePopup(device, options) {
 		"<ul class='popupTabs-link'><li class='popupTab-link'><a href='#popupTab-Main'><span>Main</span></a></li><li class='popupTab-link'>" +
 		"<a href='#popupTab-Services'><span>Services</span></a></li><li class='popupTab-link''><a href='#popupTab-Links'><span>Links</span></a></li><li class='popupTab-link'><a href='#popupTab-Info'><span>Info</span></a></li></ul>" +
 		"</div>";
+}
+
+/**
+ * Node the poller pulls its node list from ([polling] nodelistNode), without ".local.mesh".
+ * @returns {string}
+ */
+function defaultHopSource() {
+	var name = (typeof mapInfo !== 'undefined' && mapInfo && mapInfo.localnode) ? String(mapInfo.localnode) : '';
+	name = name.replace(/\.local\.mesh\.?$/i, '');
+	return name || 'the map poller';
 }
 
 /**
