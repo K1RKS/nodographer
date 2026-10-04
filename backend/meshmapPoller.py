@@ -351,7 +351,7 @@ class MySQLAdapter:
                         `lon` DECIMAL(13,7) DEFAULT 0.0,
                         `wifi_mac_address` VARCHAR(17) DEFAULT NULL,
                         `api_version` VARCHAR(50) DEFAULT NULL,
-                        `board_id` VARCHAR(50) DEFAULT NULL,
+                        `board_id` VARCHAR(255) DEFAULT NULL,
                         `firmware_mfg` VARCHAR(100) DEFAULT NULL,
                         `grid_square` VARCHAR(50) DEFAULT NULL,
                         `lan_ip` VARCHAR(45) DEFAULT NULL,
@@ -389,6 +389,21 @@ class MySQLAdapter:
                     except Exception as e:
                         if "Duplicate column name" not in str(e):
                             logging.warning(f"Could not add column {col_def.split()[0]} to {sql_db_tbl_node}: {e}")
+
+                # Older databases sized board_id at 50; some radios report longer board IDs
+                try:
+                    await cur.execute(
+                        "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS "
+                        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = 'board_id'",
+                        (sql_db_tbl_node,)
+                    )
+                    row = await cur.fetchone()
+                    cur_len = (list(row.values())[0] if isinstance(row, dict) else row[0]) if row else None
+                    if cur_len is not None and int(cur_len) < 255:
+                        await cur.execute(f"ALTER TABLE `{sql_db_tbl_node}` MODIFY COLUMN `board_id` VARCHAR(255) DEFAULT NULL")
+                        logging.info(f"Widened {sql_db_tbl_node}.board_id from {cur_len} to 255 characters")
+                except Exception as e:
+                    logging.warning(f"Could not widen board_id in {sql_db_tbl_node}: {e}")
                 
                 # Create map_info table if not exists
                 await cur.execute(f"""
@@ -826,9 +841,10 @@ class NodePoller:
                 node_info.channel = str(value.get('channel', 'None'))
                 node_info.chanbw = str(value.get('chanbw', 'None'))
                 node_info.freq = str(value.get('freq', 'None'))
-                node_info.antAzimuth = self._optional_float(value.get('azimuth'))
-                node_info.antElevation = self._optional_float(value.get('elevation'))
-                node_info.antHeight = self._optional_float(value.get('height'))
+                # Rounded to the DECIMAL(...,1) columns so MySQL doesn't warn about truncation
+                node_info.antAzimuth = self._optional_float(value.get('azimuth'), 1)
+                node_info.antElevation = self._optional_float(value.get('elevation'), 1)
+                node_info.antHeight = self._optional_float(value.get('height'), 1)
                 
                 # Parse antenna info
                 if 'antenna' in value and isinstance(value['antenna'], dict):
@@ -878,13 +894,16 @@ class NodePoller:
         return node_info
 
     @staticmethod
-    def _optional_float(value: Any) -> Optional[float]:
+    def _optional_float(value: Any, ndigits: Optional[int] = None) -> Optional[float]:
         if value is None or value == '':
             return None
         try:
-            return float(value)
+            f = float(value)
         except (TypeError, ValueError):
             return None
+        if not math.isfinite(f):
+            return None
+        return round(f, ndigits) if ndigits is not None else f
 
 
 # ============================================================================
@@ -2252,7 +2271,7 @@ async def _flush_database(config: ConfigManager):
                     `lon` DECIMAL(13,7) DEFAULT 0.0,
                     `wifi_mac_address` VARCHAR(17) DEFAULT NULL,
                     `api_version` VARCHAR(50) DEFAULT NULL,
-                    `board_id` VARCHAR(50) DEFAULT NULL,
+                    `board_id` VARCHAR(255) DEFAULT NULL,
                     `firmware_mfg` VARCHAR(100) DEFAULT NULL,
                     `grid_square` VARCHAR(50) DEFAULT NULL,
                     `lan_ip` VARCHAR(45) DEFAULT NULL,
