@@ -17,6 +17,7 @@ legend.onAdd = function (map) {
 		'<div id="legendGradientRectangle">10&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;TX Rate (mbps)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;100</div>' +
 		'<div id="legendDTDLink">DTD</div>' +
 		'<div id="legendTunnelLink">Tunnel</div>' +
+		'<div id="legendXLink">XLink</div>' +
 		'<div id="darkModeToggle"><input id="darkModeCheckBox" type="checkbox" name="darkMode" data-theme-toggle />' +
 		'<label for="darkModeCheckBox">Dark</label></div>' +
 		'<div id="legendMapOrigin"><img class="legendBandIcon" src="images/mapMarkers/pulse.svg">Map Origin</div>' +

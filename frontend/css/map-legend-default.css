@@ -74,6 +74,17 @@
 	width: 75px;
 	float: right;
 }
+#legendXLink {
+	position: absolute;
+	top: 62px;
+	right: 2px;
+	background: repeating-linear-gradient(90deg, #FF8C00 0 10px, #c96d00 10px 14px);
+	border-radius: 5px;
+	text-align: center;
+	height: 20px;
+	width: 75px;
+	float: right;
+}
 #legendOtherWireless {
 	/*#808080*/
 	position: absolute;

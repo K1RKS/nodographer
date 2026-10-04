@@ -196,6 +196,20 @@ function linkColorRF_quality(value) {
 				}
 			}
 		}
+		if(objArray[i][1].linkType === "XLINK") {
+			if(typeof objArray[i][1].linkLat === 'undefined' ||
+				objArray[i][1].linkLat === null ||
+				nodeLat === 'undefined' ||
+				nodeLat === null) {
+					continue;
+			}else {
+				linkColor = "#FF8C00";
+				L.polyline([[parseFloat(nodeLat), parseFloat(nodeLon)],[parseFloat(objArray[i][1].linkLat), parseFloat(objArray[i][1].linkLon)]],
+					{color: linkColor, opacity: 0.8, weight: 3, dashArray: '8,6', offset: 2}).bindPopup(
+					"<div class='linkPopupContent'><strong><a href='http://" + objArray[i][1].hostname.toLowerCase() + ".local.mesh' target='_blank'>" + objArray[i][1].hostname.toLowerCase() + "</a></strong> to <strong><a href='http://" + node.toLowerCase() + ".local.mesh' target='_blank'>" + node.toLowerCase() +
+					"</a></strong> XLINK</div>").addTo(linkMetric === "supernode" ? superNodeLinks : noRFLinks);
+			}
+		}
 		if(!'linkType' in objArray[i][1]) {
 			continue;
 		}

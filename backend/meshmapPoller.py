@@ -1652,6 +1652,12 @@ class MeshPollingDaemon:
         try:
             all_nodes = await self.db.get_all_nodes()
             link_count = 0
+            nodes_by_ip = {n.get('wlan_ip'): n for n in all_nodes if n.get('wlan_ip')}
+            # XLINK (and some DTD) links are keyed by the link interface IP, not the far node's
+            # mesh IP, so fall back to the link's hostname to locate the far end.
+            nodes_by_name = {
+                str(n.get('node')).lower(): n for n in all_nodes if n.get('node')
+            }
             
             for node in all_nodes:
                 links = None
@@ -1677,7 +1683,10 @@ class MeshPollingDaemon:
                 # Enrich each link with coordinates and distance
                 for dest_ip, link_data in links.items():
                     # Find destination node coordinates
-                    dest_node = next((n for n in all_nodes if n.get('wlan_ip') == dest_ip), None)
+                    dest_node = nodes_by_ip.get(dest_ip)
+                    if not dest_node and link_data.get('hostname'):
+                        host = re.sub(r'\.local\.mesh\.?$', '', str(link_data['hostname']), flags=re.IGNORECASE).lower()
+                        dest_node = nodes_by_name.get(host)
                     dest_lat = 0.0
                     dest_lon = 0.0
 
