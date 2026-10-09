@@ -621,8 +621,19 @@ MAP_DETAILS {
 	font: 13px/1.35 "Helvetica Neue", Arial, Helvetica, sans-serif;
 	color: #222;
 }
-.meshmap-addr-search-expanded .meshmap-addr-search-panel {
+.meshmap-addr-search-panel.meshmap-addr-search-panel-open {
 	display: block;
+}
+/* Phones/tablets: pinned to the top so the on-screen keyboard can't cover it.
+   z-index clears the SPIDERFY ACTIVE banner and the legend. */
+.meshmap-addr-search-panel.meshmap-addr-search-panel-docked {
+	z-index: 10000;
+	top: calc(env(safe-area-inset-top, 0px) + 8px);
+	left: calc(env(safe-area-inset-left, 0px) + 8px);
+	right: calc(env(safe-area-inset-right, 0px) + 8px);
+	width: auto;
+	max-width: 520px;
+	box-shadow: 0 3px 14px rgba(0,0,0,0.4);
 }
 .meshmap-addr-search-modes {
 	display: flex;

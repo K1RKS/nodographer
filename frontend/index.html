@@ -441,7 +441,7 @@ var rulerOptions = {
 			label: 'Distance:'
 		},
 		// marker taps add snapped points themselves; menu/control taps are not measurements
-		ignoreSelector: '.leaflet-marker-icon, .meshmap-addr-menu, .leaflet-control'
+		ignoreSelector: '.leaflet-marker-icon, .meshmap-addr-menu, .meshmap-addr-search-panel, .leaflet-control'
 	};
 var rulerControl = L.control.ruler(rulerOptions).addTo(map);
 if (window.MeshmapMarkerMenu) {

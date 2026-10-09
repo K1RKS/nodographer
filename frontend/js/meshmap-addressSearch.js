@@ -16,6 +16,8 @@
   var FETCH_TIMEOUT_MS = 10000;
   var SESSION_KEY = 'addressMarkers';
   var MODE_SESSION_KEY = 'searchMode';
+  // Screens where the on-screen keyboard would cover a panel beside the left rail
+  var DOCK_QUERY = '(pointer: coarse), (max-width: 700px)';
 
   var MODES = {
     address: { label: 'Address', placeholder: 'Search address...', aria: 'Address' },
@@ -337,6 +339,7 @@
       var results = L.DomUtil.create('ul', 'meshmap-addr-search-results', panel);
 
       this._container = container;
+      this._panel = panel;
       this._input = input;
       this._message = message;
       this._results = results;
@@ -346,6 +349,17 @@
 
       L.DomEvent.disableClickPropagation(container);
       L.DomEvent.disableScrollPropagation(container);
+      // The panel is moved out of the container when docked, so it needs its own guards
+      L.DomEvent.disableClickPropagation(panel);
+      L.DomEvent.disableScrollPropagation(panel);
+
+      if (window.visualViewport) {
+        var refit = function () {
+          if (self.isExpanded()) self._fitResults();
+        };
+        window.visualViewport.addEventListener('resize', refit);
+        window.visualViewport.addEventListener('scroll', refit);
+      }
 
       L.DomEvent.on(button, 'click', function (ev) {
         L.DomEvent.preventDefault(ev);
@@ -407,16 +421,43 @@
     },
 
     expand: function () {
+      this._dock(!!(window.matchMedia && window.matchMedia(DOCK_QUERY).matches));
       L.DomUtil.addClass(this._container, 'meshmap-addr-search-expanded');
+      L.DomUtil.addClass(this._panel, 'meshmap-addr-search-panel-open');
       this._input.focus();
       this._input.select();
+      this._fitResults();
     },
 
     collapse: function () {
       L.DomUtil.removeClass(this._container, 'meshmap-addr-search-expanded');
+      L.DomUtil.removeClass(this._panel, 'meshmap-addr-search-panel-open');
       this._clearResults();
       this._setMessage('');
       this._input.blur();
+      this._dock(false);
+    },
+
+    // Docked: pinned to the top of the map so the keyboard can't cover it. It has to
+    // leave the left rail, whose transform would otherwise anchor it mid-screen.
+    _dock: function (on) {
+      var home = on ? map.getContainer() : this._container;
+      if (this._panel.parentNode !== home) home.appendChild(this._panel);
+      L.DomUtil[on ? 'addClass' : 'removeClass'](this._panel, 'meshmap-addr-search-panel-docked');
+    },
+
+    // Keep the result list inside the part of the screen the keyboard leaves visible
+    _fitResults: function () {
+      var list = this._results;
+      if (!L.DomUtil.hasClass(this._panel, 'meshmap-addr-search-panel-docked')) {
+        list.style.maxHeight = '';
+        return;
+      }
+      var vv = window.visualViewport;
+      var bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+      var top = list.getBoundingClientRect().top;
+      if (!top) return;
+      list.style.maxHeight = Math.max(88, Math.floor(bottom - top - 8)) + 'px';
     },
 
     _setMessage: function (text, isError) {
@@ -503,6 +544,7 @@
         });
         self._items.push({ el: li, pick: item.pick });
       });
+      this._fitResults();
     },
 
     _suggestNodes: function (raw) {
