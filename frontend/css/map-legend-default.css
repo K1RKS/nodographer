@@ -32,7 +32,7 @@
 #legend {
 	position: relative;
 	width: 200px;
-	height: 120px;
+	height: 142px;
 	max-width: min(200px, calc(100vw - 24px));
 	border: 1px solid black;
 	border-radius: 5px;
@@ -136,6 +136,23 @@
 	height: 20px;
 	width: 75px;
 	float: right;
+}
+#legendData {
+	position: absolute;
+	top: 124px;
+	left: 2px;
+	height: 18px;
+	line-height: 18px;
+	font-size: 12px;
+	color: white;
+	white-space: nowrap;
+}
+#legendData a {
+	color: #9fd4ff;
+	text-decoration: underline;
+}
+#legendData a:hover {
+	color: #ffffff;
 }
 #legendHide {
 	position: absolute;

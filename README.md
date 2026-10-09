@@ -390,7 +390,7 @@ This approach is industry-standard (AWS, Google Cloud, Azure all use UTC interna
 
 ### Generated JSON Data Files
 
-The backend generates two JSON files in `/srv/meshmap/frontend/data/` (configurable via `webpageDataDir`):
+The backend generates two JSON files in `/srv/meshmap/frontend/data/` (configurable via `webpageDataDir`), plus the `nodes.kml` / `nodes.csv` / `nodes.json` exports described under [Node Export Endpoints](#node-export-endpoints-kml-csv-json):
 
 #### `map_data.json`
 Contains all data needed for the interactive map visualization:
@@ -485,6 +485,34 @@ Returns detailed tabular node data for the interactive report page. Contains per
   },
   ...
 ]
+```
+
+#### Node Export Endpoints (KML, CSV, JSON)
+```
+GET /meshmap/data/nodes.kml
+GET /meshmap/data/nodes.csv
+GET /meshmap/data/nodes.json
+```
+The poller rewrites these static files every polling cycle, next to `map_data.json`. Each file is written to a temporary name and then renamed, so a reader never gets a half-written file. The map legend links to all three (**Data: KML | CSV | JSON**). The layout follows the data downloads on [worldmap.arednmesh.org](https://worldmap.arednmesh.org/) (`data/out.{kml,csv,json}`).
+
+- **`nodes.kml`**: every node shown on the map, in a **Nodes** folder with one subfolder per band (900 MHz, 2.4 GHz, 3.4 GHz, 5.8 GHz, Supernode, No RF), plus **Unpolled** for hosts seen only as link endpoints. Clicking a node shows its hardware, firmware, RF, IP and location details. A **Links** folder holds each link once, as a line: RF links grouped by band, DTD, Tunnel (TUN/WireGuard), XLINK and Supernode. Colors match the map.
+- **`nodes.csv`**: one row per polled node. The first columns match worldmap's CSV in the same order (`node,wlan_ip,last_seen,uptime,hardware,model,firmware_version,ssid,channel,mode,chanbw,active_tunnel_count,lat,lon,wifi_mac_address,board_id,firmware_mfg,lan_ip`). Nodographer then adds `band,freq,grid_square,description,hopsAway,protocol,mesh_supernode,mesh_gateway,antGain,antBeam,antAzimuth,antElevation,antHeight`. `mode` is always blank, `hardware` repeats `model`, and `last_seen` is ISO 8601 UTC.
+- **`nodes.json`**: worldmap's layout, `{"version":"1","date":<epoch ms>,"nodeInfo":[{"data":{...}}]}`. Each `data` follows the AREDN sysinfo layout (`node`, `ip`, `lat`, `lon`, `gridsquare`, `node_details`, `tunnels`, `meshrf`, `sysinfo`). It also includes `lan_ip`, `wifi_mac_address`, `last_seen`, `band`, `hopsAway`, `protocol`, `services` and `links` (`[{hostname, linkType}]`).
+
+The CSV and JSON include polled nodes that have no location. The KML can only place nodes that have coordinates.
+
+**Google Earth Pro (live view):**
+1. **Add > Network Link**.
+2. Name it, and paste the full KML URL into **Link**, for example `http://your-host/meshmap/data/nodes.kml`.
+3. On the **Refresh** tab, set **Time-Based Refresh** to **Periodically**, about one polling cycle (for example every 10 minutes).
+4. Click **OK**. Expand the folders in **Places** to show or hide bands and link types.
+
+The KML uses Google's built-in map icons, so it also works if you download the file and open it offline.
+
+**Frontend-only hosts:** if map data is copied (for example with rsync) from the poller to a separate web server, the copy must include `data/nodes.kml`, `data/nodes.csv` and `data/nodes.json` alongside `map_data.json`. Web servers usually send `.kml` as `application/vnd.google-earth.kml+xml`. If yours doesn't, add that type (for example `AddType application/vnd.google-earth.kml+xml .kml` in Apache). Google Earth Pro loads the file either way.
+
+```bash
+curl -sI http://localhost/meshmap/data/nodes.kml | grep -i content-type
 ```
 
 #### Documentation Page

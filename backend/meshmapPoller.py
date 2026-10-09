@@ -45,6 +45,8 @@ from dataclasses import dataclass, field, asdict
 from decimal import Decimal
 import time
 
+from exporters import build_csv, build_json, build_kml, find_unpolled_nodes
+
 
 # ----------------------------------------------------------------------------
 # Firmware classification helpers (mirrors filter.py logic)
@@ -1822,6 +1824,7 @@ class MeshPollingDaemon:
             }
             
             node_report = []
+            export_nodes = []
 
             babel_count = 0
             olsr_count = 0
@@ -1936,6 +1939,15 @@ class MeshPollingDaemon:
                 # This ensures protocol is available in both outputs
                 
                 node_report.append(node_data)
+                # Export-only fields (nodes.kml/csv/json); kept out of map_data.json
+                export_nodes.append(dict(
+                    node_data,
+                    band='',
+                    wifi_mac_address=node.get('wifi_mac_address') or '',
+                    lan_ip=node.get('lan_ip') or '',
+                    api_version=node.get('api_version') or '',
+                    meshRF=node.get('meshRF') or '',
+                ))
 
                 # Track protocol counts for stats
                 if protocol == 'Babel Only':
@@ -1952,29 +1964,33 @@ class MeshPollingDaemon:
                     channel = node.get('channel', 'none')
                     board_id = node.get('board_id', '')
                     
+                    band = None
                     if is_supernode:
-                        all_devices['supernode'].append(node_data)
+                        band = 'supernode'
                     elif is_no_rf:
-                        all_devices['noRF'].append(node_data)
+                        band = 'noRF'
                     elif channel == 'none':
-                        all_devices['noRF'].append(node_data)
+                        band = 'noRF'
                     elif board_id in ['0xe009', '0xe1b9', '0xe239']:  # 900MHz boards
-                        all_devices['900'].append(node_data)
+                        band = '900'
                     elif isinstance(channel, str) and channel.isdigit():
                         ch = int(channel)
                         if ch <= 11:  # 2.4GHz channels 1-11
-                            all_devices['2ghz'].append(node_data)
+                            band = '2ghz'
                         elif (37 <= ch <= 64) or (100 <= ch <= 184) or ch >= 3000:  # 5GHz channels or 6GHz
-                            all_devices['5ghz'].append(node_data)
+                            band = '5ghz'
                         elif 76 <= ch <= 99:  # 3GHz channels 76-99
-                            all_devices['3ghz'].append(node_data)
+                            band = '3ghz'
                     elif isinstance(channel, int):
                         if channel <= 11:  # 2.4GHz channels 1-11
-                            all_devices['2ghz'].append(node_data)
+                            band = '2ghz'
                         elif (37 <= channel <= 64) or (100 <= channel <= 184) or channel >= 3000:  # 5GHz channels or 6GHz
-                            all_devices['5ghz'].append(node_data)
+                            band = '5ghz'
                         elif 76 <= channel <= 99:  # 3GHz channels 76-99
-                            all_devices['3ghz'].append(node_data)
+                            band = '3ghz'
+                    if band:
+                        all_devices[band].append(node_data)
+                        export_nodes[-1]['band'] = band
             
             # Generate map_data.js with all required variables
             # Count nodes for statistics
@@ -2083,11 +2099,37 @@ class MeshPollingDaemon:
             # Generate node_report_data.json
             node_report_file = data_dir / 'node_report_data.json'
             node_report_file.write_text(json.dumps(node_report, indent=2, default=decimal_default))
+
+            self._write_exports(data_dir, export_nodes, map_info['title'], decimal_default)
             
             self.logger.info(f"Generated data files in {data_dir}")
             
         except Exception as e:
             self.logger.error(f"Error generating data files: {e}", exc_info=True)
+
+    def _write_exports(self, data_dir: Path, export_nodes: List[Dict], title: str, json_default):
+        """Write nodes.kml / nodes.csv / nodes.json (Google Earth Pro and download formats)."""
+        generated_at = datetime.now(timezone.utc)
+        # The KML shows what the map shows: nodes placed in a band, plus their unpolled link peers
+        mapped = [n for n in export_nodes if n.get('band')]
+        builders = {
+            'nodes.kml': lambda: build_kml(mapped, find_unpolled_nodes(mapped), title, generated_at),
+            'nodes.csv': lambda: build_csv(export_nodes),
+            'nodes.json': lambda: build_json(export_nodes, generated_at, default=json_default),
+        }
+        for name, build in builders.items():
+            target = data_dir / name
+            tmp = data_dir / f'.{name}.tmp'
+            try:
+                tmp.write_text(build(), encoding='utf-8')
+                # Readers (Google Earth network links) never see a half-written file
+                os.replace(tmp, target)
+            except Exception as e:
+                self.logger.error(f"Error writing {target}: {e}", exc_info=True)
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
     
     def _log_statistics(self):
         """Log polling statistics"""

@@ -36,6 +36,11 @@ legend.onAdd = function (map) {
 		'<div id="legend5GHz">' +
 		'<img class="legendBandIcon" src="images/mapMarkers/goldRadioCircle-icon.png">5GHz' +
 		'</div>' +
+		'<div id="legendData">Data: ' +
+		'<a href="data/nodes.kml" download title="All nodes and links as KML.\nGoogle Earth Pro: Add &gt; Network Link, paste this link\'s URL">KML</a> | ' +
+		'<a href="data/nodes.csv" download title="All nodes as CSV">CSV</a> | ' +
+		'<a href="data/nodes.json" download title="All nodes as JSON">JSON</a>' +
+		'</div>' +
 		'<div id="legendHide"><button id="legendLinkButton" onclick="hideLegend()">Hide</button></div>' +
 		'</div>';
 	return div;
