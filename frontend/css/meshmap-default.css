@@ -20,7 +20,8 @@ body {
     .map-tiles {
         filter:var(--map-tiles-filter, none);
 	}
-    .leaflet-control-attribution {
+    .leaflet-control-attribution,
+    .meshmap-last-polled {
         filter:var(--attrib-filter, none);
 	}
     .leaflet-bar.leaflet-control-zoom {
@@ -572,6 +573,16 @@ MAP_DETAILS {
 .leaflet-ruler-paused {
 	border-color: orange !important;
 }
+.leaflet-bottom .leaflet-control.meshmap-last-polled {
+	margin: 0 0 2px;
+	padding: 1px 6px;
+	background: rgba(255, 255, 255, 0.8);
+	color: #333;
+	font: 12px/1.4 "Helvetica Neue", Arial, Helvetica, sans-serif;
+	white-space: nowrap;
+	border-radius: 3px 0 0 3px;
+	pointer-events: auto;
+}
 .attribution {
 	font-weight: bold;
 	color: inherit;
@@ -907,6 +918,9 @@ MAP_DETAILS {
 		max-width: min(100vw - 16px, 360px);
 		font-size: 10px;
 		line-height: 1.25;
+	}
+	.leaflet-bottom .leaflet-control.meshmap-last-polled {
+		font-size: 10px;
 	}
 
 	.popupTabs,

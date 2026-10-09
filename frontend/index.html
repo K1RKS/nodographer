@@ -577,6 +577,29 @@ attributionCtrl = map.attributionControl;
 attributionCtrl.setPrefix('');
 attributionCtrl.addAttribution(MeshMapDetails);
 
+//Last polled: newest node last_seen, stacked just above the attribution
+function newestLastSeen(devices) {
+	var newest = null;
+	Object.keys(devices || {}).forEach(function(band) {
+		(devices[band] || []).forEach(function(d) {
+			if (!d || !d.last_seen) return;
+			var t = parseUTCTimestamp(d.last_seen);
+			if (!isNaN(t) && (!newest || t > newest)) newest = t;
+		});
+	});
+	return newest;
+}
+L.Control.lastPolled = L.Control.extend({
+	onAdd: function() {
+		var box = L.DomUtil.create('div', 'leaflet-control meshmap-last-polled');
+		var newest = newestLastSeen(allDevices);
+		box.textContent = 'Last polled: ' + (newest ? newest.toLocaleString() : 'unknown');
+		box.title = 'Most recent "Last Polled" time across all nodes';
+		return box;
+	}
+});
+new L.Control.lastPolled({ position: attributionCtrl.getPosition() }).addTo(map);
+
 createDeviceMarkers(allDevices);
 if (window.MeshmapMarkerMenu) {
 	MeshmapMarkerMenu.init(map);
