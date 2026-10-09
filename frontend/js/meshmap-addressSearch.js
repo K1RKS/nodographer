@@ -1,22 +1,34 @@
 /**
- * Meshmap (== Nodographer frontend) address search.
- * Geocodes a typed address, centers the map on it, and drops a marker.
- * Markers accumulate, persist for the tab session (survive the page's
- * auto-refresh), and have a right-click / long-press menu.
+ * Meshmap (== Nodographer frontend) search control.
+ * Two modes:
+ *  - Address: geocodes a typed address, centers the map on it, and drops a
+ *    marker. Markers accumulate, persist for the tab session (survive the
+ *    page's auto-refresh), and have a right-click / long-press menu.
+ *  - Node: autocompletes node names from the map's node markers and jumps
+ *    to the chosen node.
  */
 (function (window) {
   var DEFAULT_GEOCODER_URL = 'https://nominatim.openstreetmap.org/search';
   var RESULT_LIMIT = 5;
   var RESULT_ZOOM = 17;
+  var NODE_RESULT_LIMIT = 12;
+  var NODE_ZOOM = 16;
   var FETCH_TIMEOUT_MS = 10000;
   var SESSION_KEY = 'addressMarkers';
+  var MODE_SESSION_KEY = 'searchMode';
+
+  var MODES = {
+    address: { label: 'Address', placeholder: 'Search address...', aria: 'Address' },
+    node: { label: 'Node', placeholder: 'Node name...', aria: 'Node name' },
+  };
 
   var SEARCH_SVG =
     '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">' +
-    '<path fill="currentColor" d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/>' +
+    '<path fill="currentColor" d="M10 2a8 8 0 0 1 6.32 12.9l5.39 5.4-1.41 1.4-5.4-5.39A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/>' +
     '</svg>';
 
   var map = null;
+  var getNodeMarkers = function () { return []; };
   var geocoderUrl = DEFAULT_GEOCODER_URL;
   var markerLayer = null;
   var entries = [];
@@ -240,6 +252,48 @@
       });
   }
 
+  // ----- Node lookup -----
+
+  function findNodes(query) {
+    var q = (query || '').trim().toLowerCase();
+    if (!q) return [];
+    var hits = [];
+    var byName = {};
+    (getNodeMarkers() || []).forEach(function (marker) {
+      var name = marker && marker.options && marker.options.title;
+      if (!name) return;
+      var lower = String(name).toLowerCase();
+      var pos = lower.indexOf(q);
+      if (pos === -1) return;
+      // Map data can list the same node more than once; keep one, preferring a visible marker
+      var seen = byName[lower];
+      if (seen) {
+        if (!map.hasLayer(seen.marker) && map.hasLayer(marker)) seen.marker = marker;
+        return;
+      }
+      // Prefix matches first, then matches at a word boundary, then anywhere
+      var rank = pos === 0 ? 0 : /[-_.\s]/.test(lower.charAt(pos - 1)) ? 1 : 2;
+      byName[lower] = { name: String(name), marker: marker, rank: rank };
+      hits.push(byName[lower]);
+    });
+    hits.sort(function (a, b) {
+      return a.rank - b.rank || a.name.localeCompare(b.name);
+    });
+    return hits.slice(0, NODE_RESULT_LIMIT);
+  }
+
+  function nodeIconUrl(marker) {
+    var icon = marker.options && marker.options.icon;
+    return (icon && icon.options && icon.options.iconUrl) || '';
+  }
+
+  function savedMode() {
+    if (!window.MeshmapSession) return 'address';
+    var s = MeshmapSession.read();
+    var mode = s && s[MODE_SESSION_KEY];
+    return MODES[mode] ? mode : 'address';
+  }
+
   // ----- Control -----
 
   var AddressSearchControl = L.Control.extend({
@@ -248,21 +302,37 @@
     onAdd: function () {
       var self = this;
       var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control meshmap-addr-search');
-      container.title = 'Search for an address';
+      container.title = 'Find an address or node';
 
       var button = L.DomUtil.create('a', 'meshmap-addr-search-button', container);
       button.href = '#';
       button.setAttribute('role', 'button');
-      button.setAttribute('aria-label', 'Search for an address');
+      button.setAttribute('aria-label', 'Find an address or node');
       button.innerHTML = SEARCH_SVG;
 
       var panel = L.DomUtil.create('div', 'meshmap-addr-search-panel', container);
+      var modeBar = L.DomUtil.create('div', 'meshmap-addr-search-modes', panel);
+      modeBar.setAttribute('role', 'tablist');
+      this._modeButtons = {};
+      Object.keys(MODES).forEach(function (mode) {
+        var tab = L.DomUtil.create('button', 'meshmap-addr-search-mode', modeBar);
+        tab.type = 'button';
+        tab.setAttribute('role', 'tab');
+        tab.textContent = 'Find ' + MODES[mode].label;
+        L.DomEvent.on(tab, 'click', function (ev) {
+          L.DomEvent.stop(ev);
+          self.setMode(mode);
+          self._input.focus();
+        });
+        self._modeButtons[mode] = tab;
+      });
+
       var form = L.DomUtil.create('form', 'meshmap-addr-search-form', panel);
       var input = L.DomUtil.create('input', 'meshmap-addr-search-input', form);
       input.type = 'search';
-      input.placeholder = 'Search address...';
-      input.setAttribute('aria-label', 'Address');
       input.autocomplete = 'off';
+      input.setAttribute('autocapitalize', 'off');
+      input.setAttribute('spellcheck', 'false');
       var message = L.DomUtil.create('div', 'meshmap-addr-search-message', panel);
       var results = L.DomUtil.create('ul', 'meshmap-addr-search-results', panel);
 
@@ -270,6 +340,8 @@
       this._input = input;
       this._message = message;
       this._results = results;
+      this._items = [];
+      this._active = -1;
       this._busy = false;
 
       L.DomEvent.disableClickPropagation(container);
@@ -283,7 +355,11 @@
 
       L.DomEvent.on(form, 'submit', function (ev) {
         L.DomEvent.preventDefault(ev);
-        self.search(input.value);
+        self._submit();
+      });
+
+      L.DomEvent.on(input, 'input', function () {
+        if (self._mode === 'node') self._suggestNodes(input.value);
       });
 
       L.DomEvent.on(input, 'keydown', function (ev) {
@@ -292,11 +368,38 @@
           self.collapse();
         } else if (ev.key === 'Enter') {
           L.DomEvent.stop(ev);
-          self.search(input.value);
+          self._submit();
+        } else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+          if (!self._items.length) return;
+          L.DomEvent.stop(ev);
+          self._moveActive(ev.key === 'ArrowDown' ? 1 : -1);
         }
       });
 
+      this.setMode(savedMode());
       return container;
+    },
+
+    setMode: function (mode) {
+      if (!MODES[mode]) return;
+      var changed = this._mode !== mode;
+      this._mode = mode;
+      Object.keys(this._modeButtons).forEach(function (m) {
+        var on = m === mode;
+        L.DomUtil[on ? 'addClass' : 'removeClass'](this._modeButtons[m], 'meshmap-addr-search-mode-active');
+        this._modeButtons[m].setAttribute('aria-selected', on ? 'true' : 'false');
+      }, this);
+      this._input.placeholder = MODES[mode].placeholder;
+      this._input.setAttribute('aria-label', MODES[mode].aria);
+      if (!changed) return;
+      if (window.MeshmapSession) {
+        var patch = {};
+        patch[MODE_SESSION_KEY] = mode;
+        MeshmapSession.write(patch);
+      }
+      this._clearResults();
+      this._setMessage('');
+      if (mode === 'node') this._suggestNodes(this._input.value);
     },
 
     isExpanded: function () {
@@ -323,6 +426,34 @@
 
     _clearResults: function () {
       this._results.innerHTML = '';
+      this._items = [];
+      this._active = -1;
+    },
+
+    _submit: function () {
+      if (this._active >= 0 && this._items[this._active]) {
+        this._items[this._active].pick();
+        return;
+      }
+      if (this._mode === 'node') {
+        var hits = findNodes(this._input.value);
+        if (hits.length) this._pickNode(hits[0]);
+        else this._suggestNodes(this._input.value);
+        return;
+      }
+      this.search(this._input.value);
+    },
+
+    _moveActive: function (delta) {
+      var n = this._items.length;
+      var next = this._active < 0 ? (delta > 0 ? 0 : n - 1) : (this._active + delta + n) % n;
+      if (this._active >= 0) {
+        L.DomUtil.removeClass(this._items[this._active].el, 'meshmap-addr-search-result-active');
+      }
+      this._active = next;
+      var el = this._items[next].el;
+      L.DomUtil.addClass(el, 'meshmap-addr-search-result-active');
+      if (el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
     },
 
     _place: function (r) {
@@ -331,25 +462,71 @@
       this.collapse();
     },
 
-    _showResults: function (list) {
+    _pickNode: function (hit) {
+      var marker = hit.marker;
+      var visible = map.hasLayer(marker);
+      this.collapse();
+      if (visible) {
+        map.once('moveend', function () { marker.openPopup(); });
+      } else {
+        showToast(hit.name + ' is in a hidden layer');
+      }
+      map.setView(marker.getLatLng(), Math.max(map.getZoom(), NODE_ZOOM));
+    },
+
+    // items: [{ label, iconUrl?, pick }]
+    _showResults: function (items) {
       var self = this;
       this._clearResults();
-      list.forEach(function (r) {
+      items.forEach(function (item) {
         var li = L.DomUtil.create('li', 'meshmap-addr-search-result', self._results);
-        li.textContent = r.label;
-        li.title = r.label;
+        if (item.iconUrl) {
+          L.DomUtil.addClass(li, 'meshmap-addr-search-result-node');
+          var img = L.DomUtil.create('img', 'meshmap-addr-search-result-icon', li);
+          img.src = item.iconUrl;
+          img.alt = '';
+          li.appendChild(document.createTextNode(item.label));
+        } else {
+          li.textContent = item.label;
+        }
+        li.title = item.label;
         li.tabIndex = 0;
         L.DomEvent.on(li, 'click', function (ev) {
           L.DomEvent.stop(ev);
-          self._place(r);
+          item.pick();
         });
         L.DomEvent.on(li, 'keydown', function (ev) {
           if (ev.key === 'Enter') {
             L.DomEvent.stop(ev);
-            self._place(r);
+            item.pick();
           }
         });
+        self._items.push({ el: li, pick: item.pick });
       });
+    },
+
+    _suggestNodes: function (raw) {
+      var self = this;
+      var query = (raw || '').trim();
+      if (!query) {
+        this._clearResults();
+        this._setMessage('');
+        return;
+      }
+      var hits = findNodes(query);
+      if (!hits.length) {
+        this._clearResults();
+        this._setMessage('No node matches "' + query + '"', true);
+        return;
+      }
+      this._setMessage('');
+      this._showResults(hits.map(function (hit) {
+        return {
+          label: hit.name,
+          iconUrl: nodeIconUrl(hit.marker),
+          pick: function () { self._pickNode(hit); },
+        };
+      }));
     },
 
     search: function (raw) {
@@ -370,7 +547,9 @@
             return;
           }
           self._setMessage('Pick a result:');
-          self._showResults(list);
+          self._showResults(list.map(function (r) {
+            return { label: r.label, pick: function () { self._place(r); } };
+          }));
         })
         .catch(function (err) {
           console.warn('address search failed', err);
@@ -382,9 +561,13 @@
     },
   });
 
-  function init(leafletMap, mapInfo) {
+  // opts.getNodeMarkers: () => L.Marker[] whose options.title is the node name
+  function init(leafletMap, mapInfo, opts) {
     if (!leafletMap || !window.L || !window.MeshmapMarkerMenu) return;
     map = leafletMap;
+    if (opts && typeof opts.getNodeMarkers === 'function') {
+      getNodeMarkers = opts.getNodeMarkers;
+    }
     MeshmapMarkerMenu.init(map);
     if (mapInfo && typeof mapInfo.geocoderUrl === 'string' && mapInfo.geocoderUrl) {
       geocoderUrl = mapInfo.geocoderUrl;

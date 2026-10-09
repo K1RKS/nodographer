@@ -50,10 +50,6 @@
 	<!-- Spiderfy -->
 	<script src="js/spiderfy.js"></script>
 	
-	<!-- Search -->
-	<link rel="stylesheet" href="css/leaflet-search.min.css">
-	<script src="js/leaflet-search.min.js"></script>
-	
 	<!-- URL Hash -->
 	<script src="js/leaflet-hash.js"></script>
 
@@ -417,19 +413,11 @@ addControlPlaceholders(map);
 //Add the controls
 map.zoomControl.setPosition('verticalcenterleft');
 
-//the search button
-L.control.search({
-	layer: allStations,
-	initial: false,
-	zoom: 16,
-	position: 'verticalcenterleft',
-	hideMarkerOnCollapse: true,
-	autoCollapse: true
-}).addTo(map);
-
-//address search (geocoder) with session-persistent markers
+//search button: Find Address (geocoder, session-persistent markers) / Find Node (autocomplete)
 if (window.MeshmapAddressSearch) {
-	MeshmapAddressSearch.init(map, mapInfo);
+	MeshmapAddressSearch.init(map, mapInfo, {
+		getNodeMarkers: function () { return oms ? oms.getMarkers() : []; }
+	});
 }
 
 //the ruler (visible on desktop and mobile)
