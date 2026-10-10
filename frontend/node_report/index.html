@@ -311,27 +311,20 @@
 			color: var(--link-hover);
 		}
 
-		/* Force narrow SSID column */
-		#meshdata th:nth-child(5),
-		#meshdata td:nth-child(5) {
+		/* Column sizing by class (not position) so it survives column reordering */
+		#meshdata .col-ssid {
 			width: 100px !important;
 			max-width: 100px !important;
 			overflow: hidden;
 			text-overflow: ellipsis;
 		}
 
-		/* Tunnels column - right aligned */
-		#meshdata th:nth-child(6),
-		#meshdata td:nth-child(6) {
-			width: 50px !important;
+		#meshdata .col-right {
 			text-align: right;
 		}
 
 		/* Narrow Model and Hardware to free space for Version */
-		#meshdata th:nth-child(7),
-		#meshdata td:nth-child(7),
-		#meshdata th:nth-child(8),
-		#meshdata td:nth-child(8) {
+		#meshdata .col-model {
 			width: 80px !important;
 			max-width: 80px !important;
 			overflow: hidden;
@@ -339,27 +332,13 @@
 		}
 
 		/* Allow Version column to fully display */
-		#meshdata th:nth-child(9),
-		#meshdata td:nth-child(9) {
+		#meshdata .col-version {
 			white-space: normal;
 			overflow: visible;
 			text-overflow: clip;
 		}
 
-		/* Make Response column narrow */
-		#meshdata th:nth-child(10),
-		#meshdata td:nth-child(10) {
-			width: 30px !important;
-			max-width: 30px !important;
-			text-align: right;
-			overflow: hidden;
-			text-overflow: ellipsis;
-			padding: 2px 4px !important;
-		}
-
-		/* Make Hops column narrow */
-		#meshdata th:nth-child(11),
-		#meshdata td:nth-child(11) {
+		#meshdata .col-tiny {
 			width: 30px !important;
 			max-width: 30px !important;
 			text-align: right;
@@ -486,16 +465,21 @@
 				<tr>
 					<th>#</th>
 					<th>Name</th>
+					<th>Location</th>
+					<th>IP</th>
 					<th>Description</th>
+					<th>Channel</th>
 					<th>Freq</th>
 					<th>SSID</th>
-					<th>Tunnels</th>
 					<th>Model</th>
-				<th>Hardware</th>
-				<th>Version</th>
-				<th>Response</th>
-				<th>Hops</th>
-				<th>Last Seen</th>
+					<th>Hardware</th>
+					<th>Azimuth</th>
+					<th>Version</th>
+					<th title="Active tunnels">Tunnels</th>
+					<th>Response</th>
+					<th>Hops</th>
+					<th>Uptime</th>
+					<th>Last Seen</th>
 				</tr>
 			</thead>
 			<tbody></tbody>
@@ -579,6 +563,51 @@
 				const minutes = String(d.getMinutes()).padStart(2, '0');
 				const seconds = String(d.getSeconds()).padStart(2, '0');
 				return `${year}-${month}-${day} ${hours}:${minutes}:${seconds} ${ampm}`;
+			};
+
+			const isBlank = (v) => v === null || v === undefined || v === '' ||
+				String(v).toLowerCase() === 'none' || v === 'Not Available';
+
+			// Fixed-width key so numbers sort by value under the string-based nulls-last sort
+			const numSortKey = (v) => {
+				const n = parseFloat(v);
+				if (isBlank(v) || Number.isNaN(n)) return '';
+				return String(Math.round((n + 1e6) * 1000)).padStart(12, '0');
+			};
+
+			const ipSortKey = (ip) => {
+				if (isBlank(ip)) return '';
+				return String(ip).split('.').map(p => p.padStart(3, '0')).join('.');
+			};
+
+			const hasLocation = (row) => {
+				const lat = parseFloat(row.lat), lon = parseFloat(row.lon);
+				return !Number.isNaN(lat) && !Number.isNaN(lon) && (lat !== 0 || lon !== 0);
+			};
+
+			const formatLocation = (row) => hasLocation(row) ? `${row.lat}, ${row.lon}` : '';
+
+			const renderLocation = (data, type, row) => {
+				const text = formatLocation(row);
+				if (type !== 'display' || !text) return text;
+				// Map URL hash is #zoom/lat/lon
+				return `<a href="../#16/${row.lat}/${row.lon}" title="Show on map">${text}</a>`;
+			};
+
+			const formatAzimuth = (v) => isBlank(v) ? '' : `${parseFloat(v)}°`;
+
+			// AREDN uptime looks like "69 days, 4:22" or "4:22:10"
+			const uptimeSeconds = (v) => {
+				if (isBlank(v)) return null;
+				const s = String(v);
+				const days = /(\d+)\s*day/.exec(s);
+				const clock = /(\d+):(\d+)(?::(\d+))?\s*$/.exec(s);
+				if (!days && !clock) return null;
+				let secs = days ? parseInt(days[1], 10) * 86400 : 0;
+				if (clock) {
+					secs += parseInt(clock[1], 10) * 3600 + parseInt(clock[2], 10) * 60 + parseInt(clock[3] || '0', 10);
+				}
+				return secs;
 			};
 
 			const renderLastSeen = (data) => {
@@ -675,9 +704,22 @@
 						}
 					},
 					{
+						data: null,
+						render: renderLocation
+					},
+					{
+						data: 'wlan_ip',
+						render: (data, type) => type === 'sort' ? ipSortKey(data) : (isBlank(data) ? '' : data)
+					},
+					{
 						data: 'description',
 						width: '250px',
 						render: (data) => renderTruncatedCell(data, 40)
+					},
+					{
+						data: 'channel',
+						className: 'col-right',
+						render: (data, type) => type === 'sort' ? numSortKey(data) : (isBlank(data) ? '' : String(data))
 					},
 					{
 						data: 'freq',
@@ -687,12 +729,34 @@
 					{
 						data: 'ssid',
 						width: '60px',
+						className: 'col-ssid',
 						noWrap: true,
 						render: (data) => renderTruncatedCell(data, 20)
 					},
 					{
+						data: 'model',
+						className: 'col-model',
+						render: (data) => renderTruncatedCell(data, 30)
+					},
+					{
+						data: 'board_id',
+						className: 'col-model',
+						render: (data) => renderTruncatedCell(data, 30)
+					},
+					{
+						data: 'antAzimuth',
+						className: 'col-right',
+						render: (data, type) => type === 'sort' ? numSortKey(data) : formatAzimuth(data)
+					},
+					{
+						data: 'firmware_version',
+						className: 'col-version',
+						render: renderCellWithTooltip
+					},
+					{
 						data: 'active_tunnel_count',
 						width: '40px',
+						className: 'col-right',
 						type: 'num',
 						render: function(data) {
 							if (!data || data === 0) return '';
@@ -700,21 +764,10 @@
 						}
 					},
 					{
-						data: 'model',
-						render: (data) => renderTruncatedCell(data, 30)
-					},
-					{
-						data: 'board_id',
-						render: (data) => renderTruncatedCell(data, 30)
-					},
-					{
-						data: 'firmware_version',
-						render: renderCellWithTooltip
-					},
-					{
 						data: 'response_time_ms',
 						type: 'num',
 						width: '30px',
+						className: 'col-tiny',
 						render: function(data) {
 							if (!data || data === 0) return '';
 							return data.toString();
@@ -724,9 +777,17 @@
 						data: 'hopsAway',
 						type: 'num',
 						width: '30px',
+						className: 'col-tiny',
 						render: function(data) {
 							if (!data || data === 0) return '';
 							return data.toString();
+						}
+					},
+					{
+						data: 'uptime',
+						render: (data, type) => {
+							if (type === 'sort') return numSortKey(uptimeSeconds(data));
+							return isBlank(data) ? '' : renderCellWithTooltip(data);
 						}
 					},
 					{
@@ -843,7 +904,7 @@
 			// Custom export button with CSV functionality
 			document.getElementById('exportBtn').addEventListener('click', function() {
 				const rows = [];
-				const headers = ['#', 'Name', 'Description', 'Freq', 'SSID', 'Tunnels', 'Model', 'Hardware', 'Version', 'Response', 'Hops', 'Last Seen'];
+				const headers = ['#', 'Name', 'Location', 'IP', 'Description', 'Channel', 'Freq', 'SSID', 'Model', 'Hardware', 'Azimuth', 'Version', 'Tunnels', 'Response', 'Hops', 'Uptime', 'Last Seen'];
 				rows.push(headers.join('\t'));
 				let rowIndex = 1;
 
@@ -851,15 +912,20 @@
 					const rowData = [
 						rowIndex++,
 						row.node || '',
+						formatLocation(row),
+						isBlank(row.wlan_ip) ? '' : row.wlan_ip,
 						row.description || '',
+						isBlank(row.channel) ? '' : row.channel,
 						row.freq || '',
 						row.ssid || '',
-						row.active_tunnel_count || '',
 						row.model || '',
 						row.board_id || '',
+						formatAzimuth(row.antAzimuth),
 						row.firmware_version || '',
+						row.active_tunnel_count || '',
 						row.response_time_ms ? `${row.response_time_ms} ms` : '',
 						row.hopsAway || '',
+						isBlank(row.uptime) ? '' : row.uptime,
 						formatLastSeen(row.last_seen)
 					];
 
