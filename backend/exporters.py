@@ -9,6 +9,7 @@ data/out.{kml,csv,json} so tools that read those can read these.
 import csv
 import io
 import json
+import math
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -76,6 +77,23 @@ KML_NODE_FIELDS: List[Tuple[str, str]] = [
     ('description', 'Description'),
 ]
 
+# (field, display name) machine-readable ExtendedData kept out of the balloon template
+KML_DATA_FIELDS: List[Tuple[str, str]] = [
+    ('id', 'Node ID'),
+    ('antHeight', 'Antenna Height (m AGL)'),
+    ('antHeightRef', 'Antenna Height Reference'),
+    ('antAzimuth', 'Antenna Azimuth (deg)'),
+    ('antElevation', 'Antenna Elevation (deg)'),
+    ('antGain', 'Antenna Gain (dBi)'),
+    ('antBeam', 'Antenna Beamwidth (deg)'),
+]
+
+# AREDN reports antenna height above ground only; there is no ASL/ground elevation
+JSON_UNITS = {
+    'height': 'm', 'height_ref': 'agl', 'freq': 'MHz', 'distance': 'km',
+    'azimuth': 'deg', 'elevation': 'deg', 'gain': 'dBi', 'beamwidth': 'deg', 'signal': 'dBm',
+}
+
 
 # ----- helpers -----
 
@@ -97,6 +115,46 @@ def _coord(value: Any) -> Optional[float]:
 
 def _short_host(name: Any) -> str:
     return re.sub(r'\.local\.mesh\.?$', '', str(name or ''), flags=re.IGNORECASE)
+
+
+def _num(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def _freq_mhz(node: Dict) -> Optional[float]:
+    # meshsta nodes that have not settled on a channel report 0
+    f = _num(node.get('freq'))
+    return f if f else None
+
+
+def _node_id(node: Dict) -> str:
+    return _short_host(node.get('node')).lower()
+
+
+def _antenna_block(node: Dict) -> Dict:
+    desc = node.get('antDesc')
+    has_desc = bool(desc) and desc != 'Not Available'
+
+    def rating(key: str) -> Optional[float]:
+        # The poller stores 0.0 when the node sent no antenna info
+        v = _num(node.get(key))
+        return None if v is None or (v == 0 and not has_desc) else v
+
+    return {
+        'height_m': _num(node.get('antHeight')),
+        'height_ref': 'agl',
+        'azimuth_deg': _num(node.get('antAzimuth')),
+        'elevation_deg': _num(node.get('antElevation')),
+        'gain_dbi': rating('antGain'),
+        'beamwidth_deg': rating('antBeam'),
+        'description': re.sub(r'&deg;', '\u00b0', str(desc)) if has_desc else None,
+    }
 
 
 def _service_names(services: Any) -> List[str]:
@@ -263,7 +321,13 @@ def _node_placemark(node: Dict) -> str:
     values['band'] = BAND_LABELS.get(node.get('band'), node.get('band', ''))
     values['antenna'] = _antenna(node)
     values['services'] = ', '.join(_service_names(node.get('services')))
-    data = ''.join(_data(field, display, values.get(field, '')) for field, display in KML_NODE_FIELDS)
+    values['freq'] = _freq_mhz(node)
+    ant = _antenna_block(node)
+    values.update(id=_node_id(node), antHeight=ant['height_m'], antHeightRef=ant['height_ref'],
+                  antAzimuth=ant['azimuth_deg'], antElevation=ant['elevation_deg'],
+                  antGain=ant['gain_dbi'], antBeam=ant['beamwidth_deg'])
+    data = ''.join(_data(field, display, values.get(field, ''))
+                   for field, display in KML_NODE_FIELDS + KML_DATA_FIELDS)
     return (
         '<Placemark>'
         f'<name>{escape(_text(node.get("node")))}</name>'
@@ -396,6 +460,7 @@ def build_csv(nodes: Iterable[Dict]) -> str:
         row['hardware'] = n.get('model', '')
         row['mode'] = ''
         row['band'] = BAND_LABELS.get(n.get('band'), n.get('band', ''))
+        row['freq'] = _freq_mhz(n)
         writer.writerow([_text(row.get(col, '')) for col in CSV_COLUMNS])
     return buf.getvalue()
 
@@ -405,6 +470,7 @@ def build_csv(nodes: Iterable[Dict]) -> str:
 def _json_node(n: Dict) -> Dict:
     links = n.get('link_info') if isinstance(n.get('link_info'), dict) else {}
     return {'data': {
+        'id': _node_id(n),
         'api_version': n.get('api_version', ''),
         'node': n.get('node', ''),
         'ip': n.get('wlan_ip', ''),
@@ -427,8 +493,9 @@ def _json_node(n: Dict) -> Dict:
             'ssid': n.get('ssid', ''),
             'channel': n.get('channel', ''),
             'chanbw': n.get('chanbw', ''),
-            'freq': n.get('freq', ''),
+            'freq': _freq_mhz(n),
         },
+        'antenna': _antenna_block(n),
         'sysinfo': {'uptime': n.get('uptime', ''), 'loads': n.get('loadavg', [])},
         'lan_ip': n.get('lan_ip', ''),
         'wifi_mac_address': n.get('wifi_mac_address', ''),
@@ -437,11 +504,21 @@ def _json_node(n: Dict) -> Dict:
         'hopsAway': n.get('hopsAway'),
         'protocol': n.get('protocol', ''),
         'services': _service_names(n.get('services')),
-        'links': [
-            {'hostname': _short_host(l.get('hostname') or ip), 'linkType': l.get('linkType', '')}
-            for ip, l in links.items() if isinstance(l, dict)
-        ],
+        'links': [_json_link(ip, l) for ip, l in links.items() if isinstance(l, dict)],
     }}
+
+
+def _json_link(dest_ip: str, link: Dict) -> Dict:
+    host = _short_host(link.get('hostname') or dest_ip)
+    return {
+        'hostname': host,
+        'id': host.lower(),
+        'linkType': link.get('linkType', ''),
+        'distance_km': _num(link.get('distanceKM')),
+        'bearing_deg': _num(link.get('bearing')),
+        'signal_dbm': _num(link.get('signal')),
+        'noise_dbm': _num(link.get('noise')),
+    }
 
 
 def build_json(nodes: Iterable[Dict], generated_at: Optional[datetime] = None, default=None) -> str:
@@ -450,6 +527,7 @@ def build_json(nodes: Iterable[Dict], generated_at: Optional[datetime] = None, d
         'version': '1',
         'date': int(generated_at.timestamp() * 1000),
         'generator': 'Nodographer',
+        'units': JSON_UNITS,
         'nodeInfo': [_json_node(n) for n in sorted(nodes, key=lambda n: str(n.get('node', '')).lower())],
     }
     return json.dumps(doc, default=default, separators=(',', ':'))
