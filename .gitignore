@@ -1,9 +1,27 @@
-# These are created by the poller
+# Legacy poller output (pre-meshinfo installs and rsync-fed frontend hosts)
 frontend/data/map_data.json
 frontend/data/node_report_data.json
+frontend/data/nodes.kml
+frontend/data/nodes.csv
+frontend/data/nodes.json
 
-# Python virtual environment
-backend/venv/
+# Local configuration (installers copy the *.example files)
+meshinfo/meshinfo.toml
+frontend/config/nodographer.json
+
+# Local-mode link from the frontend to the meshinfo data directory
+frontend/meshinfo
+
+# Python
+meshinfo/venv/
+__pycache__/
+*.pyc
+.pytest_cache/
 
 # Local plan/report twins and demo assets (not shipped with the app)
 reports/
+
+# Local deploy staging and credentials
+.deploy-stage/
+.deploy-frontend.tgz
+.ssh-meshmap.conf

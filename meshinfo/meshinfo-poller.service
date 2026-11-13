@@ -1,0 +1,49 @@
+# Template: meshinfo/INSTALL.sh renders @INSTALL_DIR@, @DATA_DIR@ and
+# @SERVICE_USER@ and installs the result as /etc/systemd/system/meshinfo-poller.service
+[Unit]
+Description=meshinfo mesh polling daemon (Nodographer)
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_USER@
+WorkingDirectory=@INSTALL_DIR@/meshinfo
+Environment="PATH=@INSTALL_DIR@/meshinfo/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# Group-readable output so a local web server (group www-data) can serve it
+UMask=0022
+
+# Use virtual environment Python
+ExecStart=@INSTALL_DIR@/meshinfo/venv/bin/python3 @INSTALL_DIR@/meshinfo/meshinfoPoller.py
+
+# Restart configuration
+Restart=always
+RestartSec=5
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Security hardening (adjust as needed for your environment)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@INSTALL_DIR@/meshinfo -@INSTALL_DIR@/.cache @DATA_DIR@
+
+# Grant CAP_NET_RAW capability for MTR to create raw sockets
+AmbientCapabilities=CAP_NET_RAW
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=meshinfoPoller.py
+
+# Graceful shutdown
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

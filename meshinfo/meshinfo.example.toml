@@ -1,0 +1,81 @@
+#-------------------------------------------------------------
+# meshinfo Configuration File
+#
+# meshinfo is the Nodographer scanner + read-only data API. It polls the mesh,
+# keeps the node database, and publishes the last successful scan as an
+# atomic snapshot that the Nodographer frontend (or anything else) can read.
+#
+# Copy to meshinfo.toml and edit. meshinfo.toml is gitignored so updates
+# never overwrite your settings.
+#
+# Map presentation settings (tile servers, map center, titles, units) live in
+# the frontend: frontend/config/nodographer.json
+#-------------------------------------------------------------
+
+[database]
+server = "localhost"
+user = "mesh-map"
+password = "password"
+database = "node_map"
+table_node = "node_info"
+table_map = "map_info"
+table_aredn = "aredn_info"
+table_hops = "hop_sequences"
+
+[polling]
+nodelistNode = "localnode.local.mesh"
+localTimeZone = "America/Los_Angeles"
+numParallelThreads = 500
+pollerCycleTime = 15
+
+[hops]
+enableHopCount = true
+parallelThreads = 50
+probeWaitSec = 2.0
+maxTTL = 32
+timeoutSec = 80.0
+
+# Data retention settings
+# Nodes are stored in the database even if they temporarily disappear from polls.
+# This allows the system to "ride through" temporary network issues or unreachable nodes.
+[retention]
+# Enable automatic cleanup of old nodes from the database
+expireOldNodes = true
+
+# Number of days to retain nodes in database after their last_seen timestamp.
+# Nodes not seen within this period are excluded from published data and
+# eventually deleted from the database (if expireOldNodes is true).
+expireInterval = 30
+
+# Number of days to retain hop sequence measurements
+expireHops = 30
+
+# Snapshot publishing. Each successful scan is written to
+#   <dataDir>/snapshots/<id>/   (map_data.json, node_report_data.json,
+#                                nodes.kml, nodes.csv, nodes.json, manifest.json)
+# and then <dataDir>/current is atomically re-pointed at it. Readers always see
+# the last complete scan; a scan in progress or a failed scan never replaces it.
+# <dataDir>/status.json reports whether a scan is running and when the last one
+# succeeded.
+[publish]
+dataDir = "/var/lib/meshinfo"
+# Number of snapshots kept on disk (minimum 2, so a reader that opened the
+# previous snapshot can finish while the new one goes live)
+keepSnapshots = 3
+# Refuse to publish a scan whose node count is below this fraction of the
+# previous snapshot (protects against a partial outage wiping the map).
+# 0 disables the check.
+minNodeRatio = 0.5
+# Document name used in nodes.kml (shown in Google Earth Pro)
+exportTitle = "Nodographer Mesh Map"
+
+# Read-only HTTP API (meshinfo-api.service). Serves the current snapshot at
+#   /api/v1/map_data.json, /api/v1/node_report_data.json, /api/v1/nodes.kml,
+#   /api/v1/nodes.csv, /api/v1/nodes.json, /api/v1/manifest.json,
+#   /api/v1/status.json and /healthz
+[api]
+listen = "0.0.0.0"
+port = 8090
+# Origins allowed to fetch the API from a browser (CORS). "*" is fine for
+# public read-only mesh data; list specific origins to restrict it.
+allowOrigins = ["*"]

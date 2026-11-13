@@ -38,7 +38,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 import json
 import pickle
-import tomli
 import math
 import re
 from dataclasses import dataclass, field, asdict
@@ -46,6 +45,8 @@ from decimal import Decimal
 import time
 
 from exporters import build_csv, build_json, build_kml, find_unpolled_nodes
+from meshinfo_config import ConfigManager
+from publisher import SCHEMA_VERSION, PublishRejected, SnapshotPublisher
 
 
 # ----------------------------------------------------------------------------
@@ -226,68 +227,6 @@ class NodeInfo:
     antAzimuth: Optional[float] = None
     antElevation: Optional[float] = None
     antHeight: Optional[float] = None
-
-
-class ConfigManager:
-    """Manages configuration loading and validation"""
-    
-    def __init__(self, config_path: str = "../settings.toml"):
-        self.config_path = Path(config_path)
-        self.config = self._load_config()
-        
-    def _load_config(self) -> dict:
-        """Load configuration from TOML settings file"""
-        if not self.config_path.exists():
-            raise FileNotFoundError(
-                f"\nConfiguration file not found: {self.config_path}\n"
-            )
-        with open(self.config_path, 'rb') as f:
-            return tomli.load(f)
-    
-    def _strip_quotes(self, value: str) -> str:
-        """Remove surrounding quotes from config values (legacy INI compatibility)"""
-        if isinstance(value, str):
-            value = value.strip()
-            if (value.startswith('"') and value.endswith('"')) or \
-               (value.startswith("'") and value.endswith("'")):
-                return value[1:-1]
-        return value
-    
-    def get(self, section: str, key: str, fallback: Any = None) -> Any:
-        """Get configuration value with fallback"""
-        try:
-            if section not in self.config:
-                return fallback
-            value = self.config[section].get(key, fallback)
-            # TOML handles booleans natively, no conversion needed
-            return value
-        except (KeyError, AttributeError):
-            return fallback
-    
-    def getint(self, section: str, key: str, fallback: int = 0) -> int:
-        """Get integer configuration value"""
-        try:
-            if section not in self.config:
-                return fallback
-            value = self.config[section].get(key, fallback)
-            return int(value) if value is not None else fallback
-        except (KeyError, AttributeError, ValueError):
-            return fallback
-    
-    def getfloat(self, section: str, key: str, fallback: float = 0.0) -> float:
-        """Get float configuration value"""
-        try:
-            if section not in self.config:
-                return fallback
-            value = self.config[section].get(key, fallback)
-            return float(value) if value is not None else fallback
-        except (KeyError, AttributeError, ValueError):
-            return fallback
-
-    def get_section(self, section: str) -> Dict[str, Any]:
-        """Return an entire configuration section as a dict."""
-        value = self.config.get(section, {})
-        return value if isinstance(value, dict) else {}
 
 
 class MySQLAdapter:
@@ -598,6 +537,20 @@ class MySQLAdapter:
                     stats['pollingTimeSec']
                 )
                 await cur.execute(sql, values)
+
+    async def get_polling_stats(self) -> Dict[str, Any]:
+        """Return the last saved polling statistics (empty if none)"""
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT * FROM map_info WHERE id = 'POLLINFO'")
+                row = await cur.fetchone()
+                if not row:
+                    return {}
+                columns = [desc[0] for desc in cur.description]
+                stats = dict(zip(columns, row))
+                if isinstance(stats.get('pollingTimeSec'), Decimal):
+                    stats['pollingTimeSec'] = float(stats['pollingTimeSec'])
+                return stats
 
     async def insert_hop_sequence(self, node_ip: str, hop_count: int, hop_sequence: str, measurement_time_ms: float):
         """Insert a hop sequence measurement"""
@@ -915,9 +868,10 @@ class NodePoller:
 class MeshPollingDaemon:
     """Main daemon class coordinating all polling operations"""
     
-    def __init__(self, config: ConfigManager, once: bool = False):
+    def __init__(self, config: ConfigManager, once: bool = False, publish_only: bool = False):
         self.config = config
         self.once_mode = once
+        self.publish_only = publish_only
         self.running = False
         self.logger = self._setup_logging()
         
@@ -926,6 +880,14 @@ class MeshPollingDaemon:
         
         # Database (MariaDB/MySQL)
         self.db = MySQLAdapter(config)
+
+        # Last-good snapshot publishing
+        self.publisher = SnapshotPublisher(
+            config.data_dir,
+            keep=self.config.getint('publish', 'keepSnapshots', 3),
+            min_node_ratio=self.config.getfloat('publish', 'minNodeRatio', 0.5),
+            logger=self.logger,
+        )
         
         # Polling configuration
         self.nodelistNode = self.config.get('polling', 'nodelistNode', 'localnode.local.mesh')
@@ -982,7 +944,7 @@ class MeshPollingDaemon:
         """Configure systemd journal logging"""
         # Use a stable logger name; the syslog formatter below still prefixes messages with
         # the script name for journal filtering.
-        logger = logging.getLogger('meshmap.poller')
+        logger = logging.getLogger('meshinfo.poller')
         logger.setLevel(logging.DEBUG)
         logger.propagate = False  # Prevent duplicate output
         
@@ -1003,7 +965,7 @@ class MeshPollingDaemon:
                 syslog_handler = SysLogHandler(address='/dev/log')
                 syslog_handler.setLevel(logging.INFO)
                 syslog_formatter = logging.Formatter(
-                    'meshmapPoller.py[%(process)d]: %(levelname)s - %(message)s'
+                    'meshinfoPoller.py[%(process)d]: %(levelname)s - %(message)s'
                 )
                 syslog_handler.setFormatter(syslog_formatter)
                 logger.addHandler(syslog_handler)
@@ -1077,6 +1039,14 @@ class MeshPollingDaemon:
 
             # Connect to database
             await self.db.connect()
+
+            if self.publish_only:
+                self.logger.info("Running in --publish-only mode (snapshot from database, no polling)")
+                saved = await self.db.get_polling_stats()
+                if saved:
+                    self.stats.update({k: v for k, v in saved.items() if k in self.stats})
+                await self._publish_snapshot()
+                return
             
             # Create HTTP session with connection pooling
             connector = aiohttp.TCPConnector(limit=self.parallel_threads, limit_per_host=10)
@@ -1122,22 +1092,36 @@ class MeshPollingDaemon:
                 f"Waiting {remaining:.0f}s before next poll cycle "
                 f"(pollerCycleTime={self.poller_cycle_minutes} min)"
             )
+            next_cycle = datetime.now(timezone.utc) + timedelta(seconds=remaining)
+            self.publisher.update_status(
+                nextCycleExpectedAt=next_cycle.replace(microsecond=0).strftime('%Y-%m-%dT%H:%M:%SZ')
+            )
             try:
                 await asyncio.wait_for(self.shutdown_event.wait(), timeout=remaining)
             except asyncio.TimeoutError:
                 pass
-    
+
     async def _poll_cycle(self):
-        """Execute one complete polling cycle"""
-        start_time = time.time()
+        """Execute one complete polling cycle and record its outcome in status.json"""
         self.cycle_count += 1
+        self.publisher.start_cycle(self.cycle_count)
+        try:
+            await self._run_poll_cycle()
+        except Exception as e:
+            self.publisher.finish_cycle('failed', error=str(e) or type(e).__name__)
+            raise
+
+    async def _run_poll_cycle(self):
+        """Poll the mesh, then publish the result as the new current snapshot"""
+        start_time = time.time()
         self.logger.info(f"Starting poll cycle #{self.cycle_count}")
         
         # Step 1: Get localnode info and topology
         self.logger.info(f"Fetching topology from nodelistNode: {self.nodelistNode}")
         topology = await self._fetch_topology()
         if not topology:
-            self.logger.error("Failed to retrieve network topology")
+            self.logger.error("Failed to retrieve network topology; keeping the last published snapshot")
+            self.publisher.finish_cycle('failed', error='Failed to retrieve network topology')
             return
         
         # Step 2: Build node device list
@@ -1172,8 +1156,8 @@ class MeshPollingDaemon:
         elapsed = time.time() - start_time
         self.stats['pollingTimeSec'] = round(elapsed, 2)
         
-        # Step 9: Generate data files (also updates protocol counts in stats)
-        await self._generate_data_files()
+        # Step 9: Build and publish the snapshot (also updates protocol counts in stats)
+        await self._publish_snapshot()
 
         # Step 10: Save statistics after protocol counts are populated
         await self.db.save_polling_stats(self.stats)
@@ -1756,380 +1740,319 @@ class MeshPollingDaemon:
             'bearing': round(bearing, 1)
         }
     
-    async def _generate_data_files(self):
-        """Generate JavaScript/JSON data files for web interface"""
+    async def _publish_snapshot(self):
+        """Build every output in memory and publish them together as one snapshot.
+
+        Raises on failure so the caller records a failed cycle; a rejected
+        snapshot (sanity check) is logged and leaves the current one in place.
+        """
+        snapshot_id = self.publisher.new_snapshot_id()
+        files, meta = await self._build_snapshot_files(snapshot_id)
+        meta['cycle'] = self.cycle_count
         try:
-            data_dir = Path(self.config.get('json', 'jsonDir', 'data'))
-            data_dir.mkdir(parents=True, exist_ok=True)
+            manifest = self.publisher.publish(files, meta, snapshot_id=snapshot_id)
+        except PublishRejected as e:
+            self.logger.warning(f"Snapshot {snapshot_id} rejected, keeping the last published one: {e}")
+            self.publisher.finish_cycle('rejected', error=str(e))
+            return
+        self.publisher.finish_cycle('idle', manifest=manifest)
+
+    async def _build_snapshot_files(self, snapshot_id: str) -> Tuple[Dict[str, str], Dict[str, Any]]:
+        """Build map_data.json, node_report_data.json and the node exports from the database."""
+        # Get all nodes from database
+        all_nodes = await self.db.get_all_nodes()
+        
+        # Apply retention filter if enabled
+        expire_enabled = self.config.get('retention', 'expireOldNodes', True)
+        expire_days = self.config.getint('retention', 'expireInterval', 30)
+        
+        if expire_enabled and expire_days > 0:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(days=expire_days)
+            self.logger.info(f"Filtering nodes: retention period is {expire_days} days (cutoff: {cutoff_time.isoformat()})")
             
-            # Get all nodes from database
-            all_nodes = await self.db.get_all_nodes()
-            
-            # Apply retention filter if enabled
-            expire_enabled = self.config.get('retention', 'expireOldNodes', True)
-            expire_days = self.config.getint('retention', 'expireInterval', 30)
-            
-            if expire_enabled and expire_days > 0:
-                cutoff_time = datetime.now(timezone.utc) - timedelta(days=expire_days)
-                self.logger.info(f"Filtering nodes: retention period is {expire_days} days (cutoff: {cutoff_time.isoformat()})")
-                
-                # Filter nodes based on last_seen timestamp
-                filtered_nodes = []
-                excluded_count = 0
-                for node in all_nodes:
-                    last_seen_raw = node.get('last_seen')
-                    if last_seen_raw:
-                        # Parse last_seen to datetime
-                        if isinstance(last_seen_raw, datetime):
-                            last_seen_dt = last_seen_raw
-                            # Make timezone-aware if naive
-                            if last_seen_dt.tzinfo is None:
-                                last_seen_dt = last_seen_dt.replace(tzinfo=timezone.utc)
-                        elif isinstance(last_seen_raw, str):
-                            try:
-                                last_seen_dt = datetime.fromisoformat(last_seen_raw.replace('Z', '+00:00'))
-                            except:
-                                # If parsing fails, include the node (don't risk losing data)
-                                filtered_nodes.append(node)
-                                continue
-                        else:
-                            # Unknown format, include the node
+            # Filter nodes based on last_seen timestamp
+            filtered_nodes = []
+            excluded_count = 0
+            for node in all_nodes:
+                last_seen_raw = node.get('last_seen')
+                if last_seen_raw:
+                    # Parse last_seen to datetime
+                    if isinstance(last_seen_raw, datetime):
+                        last_seen_dt = last_seen_raw
+                        # Make timezone-aware if naive
+                        if last_seen_dt.tzinfo is None:
+                            last_seen_dt = last_seen_dt.replace(tzinfo=timezone.utc)
+                    elif isinstance(last_seen_raw, str):
+                        try:
+                            last_seen_dt = datetime.fromisoformat(last_seen_raw.replace('Z', '+00:00'))
+                        except:
+                            # If parsing fails, include the node (don't risk losing data)
                             filtered_nodes.append(node)
                             continue
-                        
-                        # Only include nodes seen within retention period
-                        if last_seen_dt >= cutoff_time:
-                            filtered_nodes.append(node)
-                        else:
-                            excluded_count += 1
-                            self.logger.debug(f"Excluding node {node.get('node', 'unknown')} ({node.get('wlan_ip')}): last seen {last_seen_dt.isoformat()}")
                     else:
-                        # No last_seen timestamp - exclude from JSON output
-                        excluded_count += 1
-                        self.logger.debug(f"Excluding node {node.get('node', 'unknown')} ({node.get('wlan_ip')}): no last_seen timestamp")
-                
-                all_nodes = filtered_nodes
-                self.logger.info(f"Retention filter: kept {len(all_nodes)} nodes, excluded {excluded_count} nodes")
-            else:
-                self.logger.info("Node retention filter disabled - including all database nodes")
-            
-            # Organize devices by frequency band (matching PHP createJS.inc logic)
-            all_devices = {
-                'noRF': [],
-                'supernode': [],
-                '900': [],
-                '2ghz': [],
-                '3ghz': [],
-                '5ghz': []
-            }
-            
-            node_report = []
-            export_nodes = []
-
-            babel_count = 0
-            olsr_count = 0
-            combo_count = 0
-            
-            for node in all_nodes:
-                # Only include nodes with valid location data
-                lat = node.get('lat', 0)
-                lon = node.get('lon', 0)
-                
-                # Build node data for reporting
-                # Convert datetime to ISO 8601 UTC string
-                last_seen_raw = node.get('last_seen', '')
-                protocol = self._determine_protocol(node.get('firmware_version', ''), last_seen_raw)
-
-                # Convert to ISO 8601 UTC format for frontend
-                last_seen = _to_iso8601_utc(last_seen_raw)
-                
-                # Deserialize link_info from pickle if it's stored as hex string
-                link_info_data = {}
-                link_info_raw = node.get('link_info', '')
-                if link_info_raw and isinstance(link_info_raw, str):
-                    try:
-                        link_info_data = pickle.loads(bytes.fromhex(link_info_raw))
-                    except:
-                        link_info_data = {}
-                elif isinstance(link_info_raw, dict):
-                    link_info_data = link_info_raw
-
-                # Fallback: if this is the localnode and DB lacked link_info, use the in-memory initial map
-                if (not link_info_data):
-                    if self.localnode_ip and node.get('wlan_ip') == self.localnode_ip:
-                        link_info_data = self.initial_link_map.get(self.localnode_ip, {})
-                    elif self.initial_link_map and node.get('node') == self.config.get('polling', 'localnode', 'localnode.local.mesh'):
-                        # Fallback match by node name if IPs differ
-                        # initial_link_map is keyed by localnode_ip; grab first (only) entry
-                        first_entry = next(iter(self.initial_link_map.values()), {})
-                        link_info_data = first_entry
-                
-                # Deserialize services from pickle if it's stored as hex string
-                services_data = []
-                services_raw = node.get('services', 'Not Available')
-                if services_raw and isinstance(services_raw, str) and services_raw != 'Not Available':
-                    try:
-                        services_data = pickle.loads(bytes.fromhex(services_raw))
-                        # Ensure it's a list
-                        if not isinstance(services_data, list):
-                            services_data = []
-                    except:
-                        services_data = []
-                elif isinstance(services_raw, list):
-                    services_data = services_raw
-                
-                # Deserialize loadavg from pickle if it's stored as hex string
-                loadavg_data = [0, 0, 0]
-                loadavg_raw = node.get('loadavg', '')
-                if loadavg_raw and isinstance(loadavg_raw, str):
-                    try:
-                        loadavg_data = pickle.loads(bytes.fromhex(loadavg_raw))
-                        # Ensure it's a list with 3 elements
-                        if not isinstance(loadavg_data, list) or len(loadavg_data) != 3:
-                            loadavg_data = [0, 0, 0]
-                    except:
-                        loadavg_data = [0, 0, 0]
-                elif isinstance(loadavg_raw, list):
-                    if len(loadavg_raw) == 3:
-                        loadavg_data = loadavg_raw
-                    else:
-                        loadavg_data = [0, 0, 0]
-                
-                # Clean description: remove HTML br tags and replace with space
-                description = node.get('description', '')
-                if description:
-                    import re
-                    description = re.sub(r'<br\s*/?>', ' ', description, flags=re.IGNORECASE)
-                
-                node_data = {
-                    'node': node.get('node', ''),
-                    'wlan_ip': node.get('wlan_ip', ''),
-                    'lat': lat,
-                    'lon': lon,
-                    'description': description,
-                    'grid_square': node.get('grid_square', ''),
-                    'model': node.get('model', ''),
-                    'firmware_version': node.get('firmware_version', ''),
-                    'uptime': node.get('uptime', 'Not Available'),
-                    'loadavg': loadavg_data,
-                    'ssid': node.get('ssid', 'None'),
-                    'channel': node.get('channel', 'None'),
-                    'chanbw': node.get('chanbw', 'None'),
-                    'freq': node.get('freq', 'None'),
-                    'active_tunnel_count': node.get('active_tunnel_count', '0'),
-                    'firmware_mfg': node.get('firmware_mfg', 'Not Available'),
-                    'board_id': node.get('board_id', 'Not Available'),
-                    'services': services_data if isinstance(services_data, list) else 'Not Available',
-                    'link_info': link_info_data,
-                    'antGain': node.get('antGain', 0),
-                    'antBeam': node.get('antBeam', 0),
-                    'antDesc': node.get('antDesc', 'Not Available'),
-                    'antAzimuth': NodePoller._optional_float(node.get('antAzimuth')),
-                    'antElevation': NodePoller._optional_float(node.get('antElevation')),
-                    'antHeight': NodePoller._optional_float(node.get('antHeight')),
-                    'mesh_supernode': node.get('mesh_supernode', 'false'),
-                    'mesh_gateway': node.get('mesh_gateway', 'false'),
-                    'last_seen': last_seen,
-                    'protocol': protocol,
-                    'response_time_ms': int(round(node.get('response_time_ms', 0.0))),
-                    'hopsAway': node.get('hopsAway', 1),
-                }
-                
-                # Add node_data to both node_report and frequency-based categorization for map
-                # This ensures protocol is available in both outputs
-                
-                node_report.append(node_data)
-                # Export-only fields (nodes.kml/csv/json); kept out of map_data.json
-                export_nodes.append(dict(
-                    node_data,
-                    band='',
-                    wifi_mac_address=node.get('wifi_mac_address') or '',
-                    lan_ip=node.get('lan_ip') or '',
-                    api_version=node.get('api_version') or '',
-                    meshRF=node.get('meshRF') or '',
-                ))
-
-                # Track protocol counts for stats
-                if protocol == 'Babel Only':
-                    babel_count += 1
-                elif protocol == 'OLSR Only':
-                    olsr_count += 1
-                elif protocol == 'Combo':
-                    combo_count += 1
-                
-                # Categorize by frequency band if location is available
-                if lat != 0 or lon != 0:
-                    is_supernode = node.get('mesh_supernode', 'false') == 'true'
-                    is_no_rf = node.get('meshRF', 'on') == 'off' or node.get('channel', 'none') == 'none'
-                    channel = node.get('channel', 'none')
-                    board_id = node.get('board_id', '')
-                    
-                    band = None
-                    if is_supernode:
-                        band = 'supernode'
-                    elif is_no_rf:
-                        band = 'noRF'
-                    elif channel == 'none':
-                        band = 'noRF'
-                    elif board_id in ['0xe009', '0xe1b9', '0xe239']:  # 900MHz boards
-                        band = '900'
-                    elif isinstance(channel, str) and channel.isdigit():
-                        ch = int(channel)
-                        if ch <= 11:  # 2.4GHz channels 1-11
-                            band = '2ghz'
-                        elif (37 <= ch <= 64) or (100 <= ch <= 184) or ch >= 3000:  # 5GHz channels or 6GHz
-                            band = '5ghz'
-                        elif 76 <= ch <= 99:  # 3GHz channels 76-99
-                            band = '3ghz'
-                    elif isinstance(channel, int):
-                        if channel <= 11:  # 2.4GHz channels 1-11
-                            band = '2ghz'
-                        elif (37 <= channel <= 64) or (100 <= channel <= 184) or channel >= 3000:  # 5GHz channels or 6GHz
-                            band = '5ghz'
-                        elif 76 <= channel <= 99:  # 3GHz channels 76-99
-                            band = '3ghz'
-                    if band:
-                        all_devices[band].append(node_data)
-                        export_nodes[-1]['band'] = band
-            
-            # Generate map_data.js with all required variables
-            # Count nodes for statistics
-            total_nodes_in_db = len([n for n in all_nodes if n.get('lat') or n.get('lon')])
-            week_plus_old = len([n for n in all_nodes if not n.get('last_seen')])
-            
-            # Parse map tile servers from TOML config
-            map_tile_servers = {}
-            default_tile_server = None
-            priority_list: List[str] = []
-            
-            # Read tile servers and priority from single section
-            tileservers_config = self.config.get_section('tileservers')
-            if isinstance(tileservers_config, dict):
-                # Extract priority list
-                priority_list = tileservers_config.get('priority', [])
-                if not isinstance(priority_list, list):
-                    priority_list = []
-
-                # Flatten nested dicts created by dotted keys (e.g., aredn.W7SLZ)
-                def flatten(prefix: str, obj: Any):
-                    if isinstance(obj, dict):
-                        for k, v in obj.items():
-                            name = f"{prefix}.{k}" if prefix else str(k)
-                            flatten(name, v)
-                    else:
-                        # Only accept string URLs
-                        if isinstance(obj, str):
-                            map_tile_servers[prefix] = obj
-
-                # Build map_tile_servers from tileservers_config (excluding 'priority')
-                for key, value in tileservers_config.items():
-                    if key == 'priority':
+                        # Unknown format, include the node
+                        filtered_nodes.append(node)
                         continue
-                    flatten(key, value)
+                    
+                    # Only include nodes seen within retention period
+                    if last_seen_dt >= cutoff_time:
+                        filtered_nodes.append(node)
+                    else:
+                        excluded_count += 1
+                        self.logger.debug(f"Excluding node {node.get('node', 'unknown')} ({node.get('wlan_ip')}): last seen {last_seen_dt.isoformat()}")
+                else:
+                    # No last_seen timestamp - exclude from JSON output
+                    excluded_count += 1
+                    self.logger.debug(f"Excluding node {node.get('node', 'unknown')} ({node.get('wlan_ip')}): no last_seen timestamp")
             
-            # Determine default from priority list first
-            if priority_list:
-                for candidate in priority_list:
-                    if candidate in map_tile_servers:
-                        default_tile_server = candidate
-                        break
+            all_nodes = filtered_nodes
+            self.logger.info(f"Retention filter: kept {len(all_nodes)} nodes, excluded {excluded_count} nodes")
+        else:
+            self.logger.info("Node retention filter disabled - including all database nodes")
+        
+        # Organize devices by frequency band (matching PHP createJS.inc logic)
+        all_devices = {
+            'noRF': [],
+            'supernode': [],
+            '900': [],
+            '2ghz': [],
+            '3ghz': [],
+            '5ghz': []
+        }
+        
+        node_report = []
+        export_nodes = []
+
+        babel_count = 0
+        olsr_count = 0
+        combo_count = 0
+        
+        for node in all_nodes:
+            # Only include nodes with valid location data
+            lat = node.get('lat', 0)
+            lon = node.get('lon', 0)
             
-            # Fallback: first entry of ordered servers
-            if not default_tile_server and map_tile_servers:
-                default_tile_server = next(iter(map_tile_servers))
+            # Build node data for reporting
+            # Convert datetime to ISO 8601 UTC string
+            last_seen_raw = node.get('last_seen', '')
+            protocol = self._determine_protocol(node.get('firmware_version', ''), last_seen_raw)
+
+            # Convert to ISO 8601 UTC format for frontend
+            last_seen = _to_iso8601_utc(last_seen_raw)
             
-            # Reorder map_tile_servers honoring priority_list first
-            if priority_list:
-                ordered = {}
-                for name in priority_list:
-                    if name in map_tile_servers:
-                        ordered[name] = map_tile_servers[name]
-                for name, url in map_tile_servers.items():
-                    if name not in ordered:
-                        ordered[name] = url
-                map_tile_servers = ordered
+            # Deserialize link_info from pickle if it's stored as hex string
+            link_info_data = {}
+            link_info_raw = node.get('link_info', '')
+            if link_info_raw and isinstance(link_info_raw, str):
+                try:
+                    link_info_data = pickle.loads(bytes.fromhex(link_info_raw))
+                except:
+                    link_info_data = {}
+            elif isinstance(link_info_raw, dict):
+                link_info_data = link_info_raw
+
+            # Fallback: if this is the localnode and DB lacked link_info, use the in-memory initial map
+            if (not link_info_data):
+                if self.localnode_ip and node.get('wlan_ip') == self.localnode_ip:
+                    link_info_data = self.initial_link_map.get(self.localnode_ip, {})
+                elif self.initial_link_map and node.get('node') == self.config.get('polling', 'localnode', 'localnode.local.mesh'):
+                    # Fallback match by node name if IPs differ
+                    # initial_link_map is keyed by localnode_ip; grab first (only) entry
+                    first_entry = next(iter(self.initial_link_map.values()), {})
+                    link_info_data = first_entry
             
-            # Parse map center coordinates
-            map_center_lat = float(self.config.get('map', 'center_lat', 0))
-            map_center_lon = float(self.config.get('map', 'center_lon', 0))
+            # Deserialize services from pickle if it's stored as hex string
+            services_data = []
+            services_raw = node.get('services', 'Not Available')
+            if services_raw and isinstance(services_raw, str) and services_raw != 'Not Available':
+                try:
+                    services_data = pickle.loads(bytes.fromhex(services_raw))
+                    # Ensure it's a list
+                    if not isinstance(services_data, list):
+                        services_data = []
+                except:
+                    services_data = []
+            elif isinstance(services_raw, list):
+                services_data = services_raw
             
-            # Handle distanceUnits setting (default to miles if missing or invalid)
-            distance_units = self.config.get('map', 'distanceUnits', 'miles')
-            kilometers = distance_units == 'kilometers'
+            # Deserialize loadavg from pickle if it's stored as hex string
+            loadavg_data = [0, 0, 0]
+            loadavg_raw = node.get('loadavg', '')
+            if loadavg_raw and isinstance(loadavg_raw, str):
+                try:
+                    loadavg_data = pickle.loads(bytes.fromhex(loadavg_raw))
+                    # Ensure it's a list with 3 elements
+                    if not isinstance(loadavg_data, list) or len(loadavg_data) != 3:
+                        loadavg_data = [0, 0, 0]
+                except:
+                    loadavg_data = [0, 0, 0]
+            elif isinstance(loadavg_raw, list):
+                if len(loadavg_raw) == 3:
+                    loadavg_data = loadavg_raw
+                else:
+                    loadavg_data = [0, 0, 0]
             
-            map_info = {
-                'localnode': self.nodelistNode,
-                'lastUpdate': datetime.utcnow().replace(microsecond=0).strftime('%Y-%m-%dT%H:%M:%SZ'),
-                'mapTileServers': map_tile_servers,
-                'defaultTileServer': default_tile_server,
-                'title': self.config.get('map', 'browserTitle', 'MeshMap'),
-                'attribution': self.config.get('attribution', 'credit', ''),
-                'mapContact': self.config.get('map', 'contact', ''),
-                'kilometers': kilometers,
-                'webpageDataDir': '',
-                'mapCenterCoords': [map_center_lat, map_center_lon],
-                'mapInitialZoom': int(self.config.get('map', 'initial_zoom_level', 10)),
-                'totalNodesInDB': total_nodes_in_db,
-                'weekPlusOld': week_plus_old,
-                'reportBrowserTitle': self.config.get('attribution', 'browserTitle', 'Node Report'),
-                'reportPageTitle': self.config.get('attribution', 'pageTitle', 'Node Report')
+            # Clean description: remove HTML br tags and replace with space
+            description = node.get('description', '')
+            if description:
+                import re
+                description = re.sub(r'<br\s*/?>', ' ', description, flags=re.IGNORECASE)
+            
+            node_data = {
+                'node': node.get('node', ''),
+                'wlan_ip': node.get('wlan_ip', ''),
+                'lat': lat,
+                'lon': lon,
+                'description': description,
+                'grid_square': node.get('grid_square', ''),
+                'model': node.get('model', ''),
+                'firmware_version': node.get('firmware_version', ''),
+                'uptime': node.get('uptime', 'Not Available'),
+                'loadavg': loadavg_data,
+                'ssid': node.get('ssid', 'None'),
+                'channel': node.get('channel', 'None'),
+                'chanbw': node.get('chanbw', 'None'),
+                'freq': node.get('freq', 'None'),
+                'active_tunnel_count': node.get('active_tunnel_count', '0'),
+                'firmware_mfg': node.get('firmware_mfg', 'Not Available'),
+                'board_id': node.get('board_id', 'Not Available'),
+                'services': services_data if isinstance(services_data, list) else 'Not Available',
+                'link_info': link_info_data,
+                'antGain': node.get('antGain', 0),
+                'antBeam': node.get('antBeam', 0),
+                'antDesc': node.get('antDesc', 'Not Available'),
+                'antAzimuth': NodePoller._optional_float(node.get('antAzimuth')),
+                'antElevation': NodePoller._optional_float(node.get('antElevation')),
+                'antHeight': NodePoller._optional_float(node.get('antHeight')),
+                'mesh_supernode': node.get('mesh_supernode', 'false'),
+                'mesh_gateway': node.get('mesh_gateway', 'false'),
+                'last_seen': last_seen,
+                'protocol': protocol,
+                'response_time_ms': int(round(node.get('response_time_ms', 0.0))),
+                'hopsAway': node.get('hopsAway', 1),
             }
             
-            # Custom JSON encoder to handle Decimal types from MariaDB
-            def decimal_default(obj):
-                if isinstance(obj, Decimal):
-                    return float(obj)
-                raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+            # Add node_data to both node_report and frequency-based categorization for map
+            # This ensures protocol is available in both outputs
             
-            # Create map_data.json with all required data
-            # Update protocol counts in stats before emitting outputs
-            self.stats['babelNodes'] = babel_count
-            self.stats['olsrNodes'] = olsr_count
-            self.stats['comboNodes'] = combo_count
+            node_report.append(node_data)
+            # Export-only fields (nodes.kml/csv/json); kept out of map_data.json
+            export_nodes.append(dict(
+                node_data,
+                band='',
+                wifi_mac_address=node.get('wifi_mac_address') or '',
+                lan_ip=node.get('lan_ip') or '',
+                api_version=node.get('api_version') or '',
+                meshRF=node.get('meshRF') or '',
+            ))
 
-            map_data = {
-                "mapInfo": map_info,
-                "pollingInfo": self.stats,
-                "allDevices": all_devices
-            }
+            # Track protocol counts for stats
+            if protocol == 'Babel Only':
+                babel_count += 1
+            elif protocol == 'OLSR Only':
+                olsr_count += 1
+            elif protocol == 'Combo':
+                combo_count += 1
             
-            map_data_file = data_dir / 'map_data.json'
-            map_data_file.write_text(json.dumps(map_data, indent=2, default=decimal_default))
-            
-            # Generate node_report_data.json
-            node_report_file = data_dir / 'node_report_data.json'
-            node_report_file.write_text(json.dumps(node_report, indent=2, default=decimal_default))
+            # Categorize by frequency band if location is available
+            if lat != 0 or lon != 0:
+                is_supernode = node.get('mesh_supernode', 'false') == 'true'
+                is_no_rf = node.get('meshRF', 'on') == 'off' or node.get('channel', 'none') == 'none'
+                channel = node.get('channel', 'none')
+                board_id = node.get('board_id', '')
+                
+                band = None
+                if is_supernode:
+                    band = 'supernode'
+                elif is_no_rf:
+                    band = 'noRF'
+                elif channel == 'none':
+                    band = 'noRF'
+                elif board_id in ['0xe009', '0xe1b9', '0xe239']:  # 900MHz boards
+                    band = '900'
+                elif isinstance(channel, str) and channel.isdigit():
+                    ch = int(channel)
+                    if ch <= 11:  # 2.4GHz channels 1-11
+                        band = '2ghz'
+                    elif (37 <= ch <= 64) or (100 <= ch <= 184) or ch >= 3000:  # 5GHz channels or 6GHz
+                        band = '5ghz'
+                    elif 76 <= ch <= 99:  # 3GHz channels 76-99
+                        band = '3ghz'
+                elif isinstance(channel, int):
+                    if channel <= 11:  # 2.4GHz channels 1-11
+                        band = '2ghz'
+                    elif (37 <= channel <= 64) or (100 <= channel <= 184) or channel >= 3000:  # 5GHz channels or 6GHz
+                        band = '5ghz'
+                    elif 76 <= channel <= 99:  # 3GHz channels 76-99
+                        band = '3ghz'
+                if band:
+                    all_devices[band].append(node_data)
+                    export_nodes[-1]['band'] = band
+        
+        # Generate map_data.js with all required variables
+        # Count nodes for statistics
+        total_nodes_in_db = len([n for n in all_nodes if n.get('lat') or n.get('lon')])
+        week_plus_old = len([n for n in all_nodes if not n.get('last_seen')])
+        
+        map_info = {
+            'localnode': self.nodelistNode,
+            'lastUpdate': datetime.now(timezone.utc).replace(microsecond=0).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'totalNodesInDB': total_nodes_in_db,
+            'weekPlusOld': week_plus_old,
+            'snapshotId': snapshot_id,
+            'schemaVersion': SCHEMA_VERSION,
+        }
+        
+        # Custom JSON encoder to handle Decimal types from MariaDB
+        def decimal_default(obj):
+            if isinstance(obj, Decimal):
+                return float(obj)
+            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+        
+        # Update protocol counts in stats before emitting outputs
+        self.stats['babelNodes'] = babel_count
+        self.stats['olsrNodes'] = olsr_count
+        self.stats['comboNodes'] = combo_count
 
-            self._write_exports(data_dir, export_nodes, map_info['title'], decimal_default)
-            
-            self.logger.info(f"Generated data files in {data_dir}")
-            
-        except Exception as e:
-            self.logger.error(f"Error generating data files: {e}", exc_info=True)
+        map_data = {
+            "mapInfo": map_info,
+            "pollingInfo": self.stats,
+            "allDevices": all_devices
+        }
 
-    def _write_exports(self, data_dir: Path, export_nodes: List[Dict], title: str, json_default):
-        """Write nodes.kml / nodes.csv / nodes.json (Google Earth Pro and download formats)."""
+        files = {
+            'map_data.json': json.dumps(map_data, indent=2, default=decimal_default),
+            'node_report_data.json': json.dumps(node_report, indent=2, default=decimal_default),
+        }
+        files.update(self._build_exports(export_nodes, decimal_default))
+
+        meta = {
+            'generatedAt': map_info['lastUpdate'],
+            'localnode': self.nodelistNode,
+            'nodeCount': len(node_report),
+            'mappableNodes': sum(len(v) for v in all_devices.values()),
+            'linkCount': self.stats.get('mappableLinks', 0),
+            'pollingTimeSec': self.stats.get('pollingTimeSec', 0),
+        }
+        self.logger.info(f"Built snapshot {snapshot_id}: {meta['nodeCount']} nodes, "
+                         f"{meta['mappableNodes']} mappable")
+        return files, meta
+
+    def _export_title(self) -> str:
+        return (self.config.get('publish', 'exportTitle')
+                or self.config.get('map', 'browserTitle')
+                or 'Nodographer Mesh Map')
+
+    def _build_exports(self, export_nodes: List[Dict], json_default) -> Dict[str, str]:
+        """Build nodes.kml / nodes.csv / nodes.json (Google Earth Pro and download formats)."""
         generated_at = datetime.now(timezone.utc)
         # The KML shows what the map shows: nodes placed in a band, plus their unpolled link peers
         mapped = [n for n in export_nodes if n.get('band')]
-        builders = {
-            'nodes.kml': lambda: build_kml(mapped, find_unpolled_nodes(mapped), title, generated_at),
-            'nodes.csv': lambda: build_csv(export_nodes),
-            'nodes.json': lambda: build_json(export_nodes, generated_at, default=json_default),
+        return {
+            'nodes.kml': build_kml(mapped, find_unpolled_nodes(mapped), self._export_title(), generated_at),
+            'nodes.csv': build_csv(export_nodes),
+            'nodes.json': build_json(export_nodes, generated_at, default=json_default),
         }
-        for name, build in builders.items():
-            target = data_dir / name
-            tmp = data_dir / f'.{name}.tmp'
-            try:
-                tmp.write_text(build(), encoding='utf-8')
-                # Readers (Google Earth network links) never see a half-written file
-                os.replace(tmp, target)
-            except Exception as e:
-                self.logger.error(f"Error writing {target}: {e}", exc_info=True)
-                try:
-                    tmp.unlink()
-                except OSError:
-                    pass
     
     def _log_statistics(self):
         """Log polling statistics"""
@@ -2192,15 +2115,16 @@ class MeshPollingDaemon:
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
-        description='Mesh Map Polling Daemon',
+        description='meshinfo polling daemon (Nodographer scanner)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s                    Run in daemon mode (continuous polling)
   %(prog)s --once             Run one poll cycle then exit
+  %(prog)s --publish-only     Publish a snapshot from the database (no polling) and exit
   %(prog)s --flush            Clear the node_info database table and exit
-  
-For systemd integration, use the provided pollingScript.service file.
+
+For systemd integration, use the provided meshinfo-poller.service file.
         """
     )
     parser.add_argument(
@@ -2209,14 +2133,20 @@ For systemd integration, use the provided pollingScript.service file.
         help='Perform one poll cycle then exit cleanly'
     )
     parser.add_argument(
+        '--publish-only',
+        action='store_true',
+        help='Build and publish a snapshot from the current database contents, then exit'
+    )
+    parser.add_argument(
         '--flush',
         action='store_true',
         help='Clear the node_info database table and exit'
     )
     parser.add_argument(
         '--config',
-        default='../settings.toml',
-        help='Path to configuration file (default: ../settings.toml)'
+        default=None,
+        help='Path to configuration file (default: meshinfo.toml next to this script, '
+             'falling back to ../settings.toml)'
     )
     
     args = parser.parse_args()
@@ -2232,7 +2162,7 @@ For systemd integration, use the provided pollingScript.service file.
             sys.exit(0)
         
         # Create and run daemon
-        daemon = MeshPollingDaemon(config, once=args.once)
+        daemon = MeshPollingDaemon(config, once=args.once, publish_only=args.publish_only)
         asyncio.run(daemon.start())
         
         sys.exit(0)

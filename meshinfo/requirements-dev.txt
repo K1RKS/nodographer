@@ -1,0 +1,5 @@
+# Test dependencies: venv/bin/pip install -r requirements-dev.txt
+# Run: cd meshinfo && venv/bin/python -m pytest
+-r requirements.txt
+pytest>=8.0
+pytest-aiohttp>=1.0

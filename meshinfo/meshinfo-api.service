@@ -1,0 +1,32 @@
+# Template: meshinfo/INSTALL.sh renders @INSTALL_DIR@, @DATA_DIR@ and
+# @SERVICE_USER@ and installs the result as /etc/systemd/system/meshinfo-api.service
+[Unit]
+Description=meshinfo read-only data API (Nodographer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_USER@
+WorkingDirectory=@INSTALL_DIR@/meshinfo
+ExecStart=@INSTALL_DIR@/meshinfo/venv/bin/python3 @INSTALL_DIR@/meshinfo/api.py
+
+Restart=always
+RestartSec=5
+
+# Read-only: no database, no raw sockets, no writes
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=@DATA_DIR@
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=meshinfo-api
+
+[Install]
+WantedBy=multi-user.target

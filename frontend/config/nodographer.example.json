@@ -1,0 +1,26 @@
+{
+  "_comment": "Copy to nodographer.json (gitignored). meshinfo.baseUrl: 'meshinfo/current/' = local meshinfo data dir linked at frontend/meshinfo; 'meshinfo/' = nginx proxy to a remote meshinfo API; 'https://host/api/v1/' = remote API direct; 'data/' = legacy rsync into frontend/data.",
+  "meshinfo": {
+    "baseUrl": "meshinfo/current/"
+  },
+  "map": {
+    "title": "Nodographer Mesh Map",
+    "centerLat": 43.970,
+    "centerLon": -120.034,
+    "initialZoom": 7,
+    "distanceUnits": "miles",
+    "contact": "",
+    "attribution": "© OpenStreetMap contributors",
+    "reportBrowserTitle": "Nodographer Node Report",
+    "reportPageTitle": "Node Report",
+    "geocoderUrl": "",
+    "tileServers": {
+      "aredn.K1RKS": "//k1rks-tileserver-world.local.mesh/hot/{z}/{x}/{y}.png",
+      "aredn.K9RCP": "//wvmn-tileserver.local.mesh/osm/tiles/{z}/{x}/{y}.png",
+      "aredn.W7SLZ": "//w7slz-tileserver.local.mesh:8080/styles/basic-preview/512/{z}/{x}/{y}.png",
+      "inet.Topographic": "//{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+      "inet.Street": "//{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+    },
+    "priority": ["aredn.K1RKS", "aredn.K9RCP", "aredn.W7SLZ", "inet.Topographic", "inet.Street"]
+  }
+}

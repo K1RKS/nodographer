@@ -495,6 +495,7 @@
 	<script src="js/pdfmake.js"></script>
 	<script src="js/buttons.html5.js"></script>
 	<script src="js/dataTables.colReorder.js"></script>
+	<script src="../js/nodographer-config.js"></script>
 
 	<script>
 		document.addEventListener('DOMContentLoaded', function() {
@@ -514,20 +515,27 @@
 				window.history.replaceState({}, '', url.toString());
 			};
 
-			// Fetch map info to get report titles
-			fetch('../data/map_data.json')
-				.then(response => response.json())
-				.then(data => {
-					const reportBrowserTitle = data.mapInfo?.reportBrowserTitle || 'Node Report';
-					const reportPageTitle = data.mapInfo?.reportPageTitle || 'Node Report';
-					document.title = reportBrowserTitle;
-					document.getElementById('pageTitle').textContent = reportPageTitle;
-				})
-				.catch(error => {
-					console.error('Error loading map data for titles:', error);
-					document.title = 'Node Report';
-					document.getElementById('pageTitle').textContent = 'Node Report';
-				});
+			const setReportTitles = (browserTitle, pageTitle) => {
+				document.title = browserTitle || 'Node Report';
+				document.getElementById('pageTitle').textContent = pageTitle || 'Node Report';
+			};
+
+			// Report titles come from config/nodographer.json; older setups
+			// without it still carry them in map_data.json's mapInfo.
+			const configReady = NodographerConfig.load('../').then(() => {
+				const cfg = NodographerConfig.map();
+				if (cfg.reportBrowserTitle || cfg.reportPageTitle) {
+					setReportTitles(cfg.reportBrowserTitle, cfg.reportPageTitle);
+					return;
+				}
+				return fetch(NodographerConfig.dataUrl('map_data.json'), { cache: 'no-store' })
+					.then(response => response.json())
+					.then(data => setReportTitles(data.mapInfo?.reportBrowserTitle, data.mapInfo?.reportPageTitle))
+					.catch(error => {
+						console.error('Error loading map data for titles:', error);
+						setReportTitles();
+					});
+			});
 
 			// Helper functions for cell rendering with tooltips
 			const renderCellWithTooltip = (data) => {
@@ -659,7 +667,8 @@
 			// Fetch and filter data based on protocol parameter
 			const loadNodeData = async function() {
 				try {
-					const response = await fetch('../data/node_report_data.json');
+					await configReady;
+					const response = await fetch(NodographerConfig.dataUrl('node_report_data.json'), { cache: 'no-store' });
 					const json = await response.json();
 					const dataset = Array.isArray(json) ? json : [];
 					const filtered = dataset.filter(row => row.model !== 'Not Available');
