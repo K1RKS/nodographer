@@ -14,6 +14,7 @@
 # Environment overrides:
 #   DATA_DIR      /var/lib/meshinfo   (only used when meshinfo.toml is created)
 #   SERVICE_USER  meshmap
+#   CONFIG_OWNER  root                (owner of a newly created meshinfo.toml)
 #   DB_NAME       node_map
 #   DB_USER       mesh-map
 #   DB_PASS       password
@@ -126,22 +127,25 @@ SQL
 ensure_config() {
 	print_header "Configuration"
 	if [ -f "$CONFIG" ]; then
+		# Ownership is left as is: it may have been handed to an admin user
 		print_step "Keeping existing $CONFIG"
-	elif [ -f "$LEGACY_SETTINGS" ] && { [ "$UPDATE" = 1 ] || [ "$MIGRATED" = 1 ]; }; then
-		# frontend/INSTALL.sh migrates the map settings into frontend/config/nodographer.json
-		print_step "Migrating $LEGACY_SETTINGS -> meshinfo.toml"
-		"$VENV/bin/python3" "$MESHINFO_DIR/tools/migrate_settings.py" --only meshinfo \
-			--settings "$LEGACY_SETTINGS" --data-dir "${DATA_DIR:-/var/lib/meshinfo}"
-		MIGRATED=1
 	else
-		print_step "Creating $CONFIG from meshinfo.example.toml"
-		cp "$MESHINFO_DIR/meshinfo.example.toml" "$CONFIG"
-		sed -i "s|^dataDir = .*|dataDir = \"${DATA_DIR:-/var/lib/meshinfo}\"|" "$CONFIG"
-		sed -i "s|^password = .*|password = \"$DB_PASS\"|; s|^user = .*|user = \"$DB_USER\"|; s|^database = .*|database = \"$DB_NAME\"|" "$CONFIG"
-		print_step "Edit $CONFIG to set nodelistNode and other options"
+		if [ -f "$LEGACY_SETTINGS" ] && { [ "$UPDATE" = 1 ] || [ "$MIGRATED" = 1 ]; }; then
+			# frontend/INSTALL.sh migrates the map settings into frontend/config/nodographer.json
+			print_step "Migrating $LEGACY_SETTINGS -> meshinfo.toml"
+			"$VENV/bin/python3" "$MESHINFO_DIR/tools/migrate_settings.py" --only meshinfo \
+				--settings "$LEGACY_SETTINGS" --data-dir "${DATA_DIR:-/var/lib/meshinfo}"
+			MIGRATED=1
+		else
+			print_step "Creating $CONFIG from meshinfo.example.toml"
+			cp "$MESHINFO_DIR/meshinfo.example.toml" "$CONFIG"
+			sed -i "s|^dataDir = .*|dataDir = \"${DATA_DIR:-/var/lib/meshinfo}\"|" "$CONFIG"
+			sed -i "s|^password = .*|password = \"$DB_PASS\"|; s|^user = .*|user = \"$DB_USER\"|; s|^database = .*|database = \"$DB_NAME\"|" "$CONFIG"
+			print_step "Edit $CONFIG to set nodelistNode and other options"
+		fi
+		chown "${CONFIG_OWNER:-root}:$SERVICE_USER" "$CONFIG"
+		chmod 640 "$CONFIG"
 	fi
-	chown "root:$SERVICE_USER" "$CONFIG"
-	chmod 640 "$CONFIG"
 	DATA_DIR="$("$VENV/bin/python3" -c "import sys; sys.path.insert(0, '$MESHINFO_DIR'); from meshinfo_config import ConfigManager; print(ConfigManager('$CONFIG').data_dir)")"
 	print_success "Config: $CONFIG (dataDir = $DATA_DIR)"
 }

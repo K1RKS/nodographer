@@ -51,6 +51,39 @@ The code lives in one git checkout (for example `/srv/meshmap`). Each VM install
 
 ## Installation
 
+### Proxmox container (Debian 13), guided
+
+For a new Debian 13 (trixie) LXC container, `lxc-install.sh` does the whole install. Create the container from the Debian 13 template (keep **Nesting** enabled, which is the default for unprivileged containers), then run this as root on its console:
+
+```bash
+apt update && apt install -y curl
+curl -fsSLO https://raw.githubusercontent.com/K1RKS/nodographer/main/lxc-install.sh
+bash lxc-install.sh
+```
+
+It asks:
+- which parts to install: both, meshinfo only, or the map only;
+- the user that runs the services and owns the configuration (default `meshmap`), and whether to give it a password for SSH and sudo;
+- whether to install and configure nginx. With nginx it replaces the default site, so `http://<container>/` goes to the map, and on a meshinfo host the API is also served at `/api/v1/` on port 80;
+- for a map-only container, where its data comes from (`proxy`, `direct` or `legacy`) and the meshinfo API URL.
+
+It then installs packages, creates the user, clones the repository to `/srv/meshmap` as that user, and runs `meshinfo/INSTALL.sh` and/or `frontend/INSTALL.sh`. The database gets a random password. The config files are owned by the new user, and that user may restart the meshinfo services without a password.
+
+Then configure as that user:
+
+```bash
+su - meshmap            # or: ssh meshmap@<container>, if you set a password
+./nodographer-setup
+```
+
+The setup script (`setup.sh`, linked as `~/nodographer-setup`) asks for whatever is installed, offering the current values as defaults:
+- **meshinfo:** topology node (`nodelistNode`, tested on entry), time zone, scan interval, parallel polls, hop counts, retention, KML name, and allowed API origins. It then restarts the services.
+- **Map:** title, center, zoom, units, contact, attribution, report titles, address search URL, and the tile servers (add, remove, reorder, set default). It can also switch the data source; that step needs root or sudo.
+
+Run it again any time to change settings. Every `lxc-install.sh` question can be answered in advance with an environment variable for unattended installs; see the top of the script.
+
+If a meshinfo service fails with `226/NAMESPACE`, enable **Options > Features > Nesting** for the container in Proxmox, restart the container, and restart the services.
+
 ### Clone the repository
 
 On every VM that runs either part:

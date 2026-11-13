@@ -21,7 +21,12 @@
 #                     build a missing nodographer.json from the legacy
 #                     settings.toml instead of nodographer.example.json
 #                     (update.sh uses this when migrating an old install)
+#   --no-web-server   don't install nginx, symlink the web root or write nginx
+#                     snippets; serve frontend/ with your own web server
 #   -y                don't prompt
+#
+# Environment overrides:
+#   CONFIG_OWNER      root   (owner of a newly created nodographer.json)
 #
 
 set -euo pipefail
@@ -38,6 +43,7 @@ DATA_DIR=""
 WEB_ROOT="/var/www/html"
 WEB_NAME="meshmap"
 FROM_LEGACY=0
+WEB_SERVER=1
 ASSUME_YES="${ASSUME_YES:-0}"
 
 while [ $# -gt 0 ]; do
@@ -48,8 +54,9 @@ while [ $# -gt 0 ]; do
 		--web-root) WEB_ROOT="$2"; shift 2 ;;
 		--web-name) WEB_NAME="$2"; shift 2 ;;
 		--from-legacy-settings) FROM_LEGACY=1; shift ;;
+		--no-web-server) WEB_SERVER=0; shift ;;
 		-y|--yes) ASSUME_YES=1; shift ;;
-		-h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+		-h|--help) sed -n '2,33p' "$0"; exit 0 ;;
 		*) print_error "Unknown argument: $1"; exit 1 ;;
 	esac
 done
@@ -139,19 +146,22 @@ if ! confirm "Continue?"; then
 	exit 1
 fi
 
-print_header "Web server"
-if ! command -v nginx >/dev/null && ! command -v apache2 >/dev/null; then
-	print_step "No web server found; installing nginx..."
-	apt-get update -qq
-	apt-get install -y nginx > /dev/null
-	systemctl enable --now nginx >/dev/null 2>&1 || true
-fi
-if [ -L "$WEB_LINK" ] || [ ! -e "$WEB_LINK" ]; then
-	ln -sfn "$FRONTEND_DIR" "$WEB_LINK"
-	print_success "$WEB_LINK -> $FRONTEND_DIR"
-else
-	print_error "$WEB_LINK exists and is not a symlink; remove it or use --web-name"
-	exit 1
+if [ "$WEB_SERVER" = 1 ]; then
+	print_header "Web server"
+	if ! command -v nginx >/dev/null && ! command -v apache2 >/dev/null; then
+		print_step "No web server found; installing nginx..."
+		apt-get update -qq
+		apt-get install -y nginx > /dev/null
+		systemctl enable --now nginx >/dev/null 2>&1 || true
+	fi
+	if [ -L "$WEB_LINK" ] || [ ! -e "$WEB_LINK" ]; then
+		mkdir -p "$WEB_ROOT"
+		ln -sfn "$FRONTEND_DIR" "$WEB_LINK"
+		print_success "$WEB_LINK -> $FRONTEND_DIR"
+	else
+		print_error "$WEB_LINK exists and is not a symlink; remove it or use --web-name"
+		exit 1
+	fi
 fi
 
 print_header "Configuration"
@@ -164,6 +174,7 @@ if [ ! -f "$CONFIG" ]; then
 		print_step "Creating $CONFIG from nodographer.example.json"
 		cp "$FRONTEND_DIR/config/nodographer.example.json" "$CONFIG"
 	fi
+	chown "${CONFIG_OWNER:-root}" "$CONFIG"
 fi
 python3 - "$CONFIG" "$BASE_URL" <<'PY'
 import json, sys
@@ -179,9 +190,37 @@ chmod 644 "$CONFIG"
 print_success "meshinfo.baseUrl = $BASE_URL in $CONFIG"
 
 SNIPPET=""
+NGINX_CHANGED=0
 if [ "$MODE" != local ] && [ -L "$FRONTEND_DIR/meshinfo" ]; then
 	rm -f "$FRONTEND_DIR/meshinfo"
 fi
+if [ "$WEB_SERVER" = 0 ]; then
+	SNIPPETS_DIR=""
+else
+	SNIPPETS_DIR=/etc/nginx/snippets
+fi
+
+# The local and proxy snippets both define $WEB_PATH/meshinfo/, so the one the
+# new mode doesn't use has to go (a wildcard include would load both)
+case "$MODE" in
+	local) MODE_SNIPPET=nodographer-local.conf ;;
+	proxy) MODE_SNIPPET=nodographer-meshinfo.conf ;;
+	*) MODE_SNIPPET="" ;;
+esac
+if [ -n "$SNIPPETS_DIR" ]; then
+	for stale in nodographer-local.conf nodographer-meshinfo.conf; do
+		[ "$stale" = "$MODE_SNIPPET" ] && continue
+		[ -e "$SNIPPETS_DIR/$stale" ] || continue
+		if grep -Rqs "include snippets/$stale" /etc/nginx/sites-enabled/ /etc/nginx/conf.d/; then
+			print_error "$SNIPPETS_DIR/$stale is not used in $MODE mode; remove its include line from your nginx config, then delete it"
+		else
+			rm -f "$SNIPPETS_DIR/$stale"
+			NGINX_CHANGED=1
+			print_step "Removed $SNIPPETS_DIR/$stale (not used in $MODE mode)"
+		fi
+	done
+fi
+
 case "$MODE" in
 	local)
 		print_header "Local meshinfo data"
@@ -192,18 +231,18 @@ case "$MODE" in
 			print_error "$DATA_DIR is not group '$group'; the web server may not be able to read it"
 			echo "  Fix: sudo chgrp $group $DATA_DIR && sudo chmod 2750 $DATA_DIR"
 		fi
-		if [ -d /etc/nginx/snippets ]; then
-			SNIPPET=/etc/nginx/snippets/nodographer-local.conf
+		if [ -n "$SNIPPETS_DIR" ] && [ -d "$SNIPPETS_DIR" ]; then
+			SNIPPET="$SNIPPETS_DIR/$MODE_SNIPPET"
 			render_template "$FRONTEND_DIR/deploy/nginx-local.conf" "$SNIPPET" "WEB_PATH=$WEB_PATH"
 		fi
 		;;
 	proxy)
 		print_header "nginx proxy"
-		if [ -d /etc/nginx/snippets ]; then
-			SNIPPET=/etc/nginx/snippets/nodographer-meshinfo.conf
+		if [ -n "$SNIPPETS_DIR" ] && [ -d "$SNIPPETS_DIR" ]; then
+			SNIPPET="$SNIPPETS_DIR/$MODE_SNIPPET"
 			render_template "$FRONTEND_DIR/deploy/nginx-proxy.conf" "$SNIPPET" \
 				"WEB_PATH=$WEB_PATH" "MESHINFO_URL=$MESHINFO_URL"
-		else
+		elif [ "$WEB_SERVER" = 1 ]; then
 			print_error "nginx snippets dir not found; proxy $WEB_PATH/meshinfo/ to $MESHINFO_URL in your web server manually"
 		fi
 		;;
@@ -220,13 +259,9 @@ esac
 
 if [ -n "$SNIPPET" ]; then
 	print_success "Installed $SNIPPET"
-	if grep -rqs "include snippets/$(basename "$SNIPPET")" /etc/nginx/sites-enabled/ /etc/nginx/conf.d/; then
-		if nginx -t 2>/dev/null; then
-			systemctl reload nginx
-			print_success "nginx reloaded"
-		else
-			print_error "nginx -t failed; check your configuration"
-		fi
+	# Included by name, or by the wildcard in the site lxc-install.sh writes
+	if grep -RqsE "include snippets/($(basename "$SNIPPET")|nodographer-\*\.conf)" /etc/nginx/sites-enabled/ /etc/nginx/conf.d/; then
+		NGINX_CHANGED=1
 	else
 		echo ""
 		echo "  Add this line inside your server { } block (e.g. /etc/nginx/sites-available/default),"
@@ -236,8 +271,22 @@ if [ -n "$SNIPPET" ]; then
 		echo ""
 	fi
 fi
+if [ "$NGINX_CHANGED" = 1 ] && command -v nginx >/dev/null; then
+	if nginx -t 2>/dev/null; then
+		systemctl reload nginx
+		print_success "nginx reloaded"
+	else
+		print_error "nginx -t failed; check your configuration"
+	fi
+fi
 
 print_header "Frontend ready"
-echo "  Map:     http://$(hostname -f 2>/dev/null || hostname)$WEB_PATH/"
+if [ "$WEB_SERVER" = 1 ]; then
+	echo "  Map:     http://$(hostname -f 2>/dev/null || hostname)$WEB_PATH/"
+else
+	echo "  Serve $FRONTEND_DIR with your web server (for example at $WEB_PATH/)."
+	[ "$MODE" = local ] && echo "  It must follow the symlink $FRONTEND_DIR/meshinfo -> $DATA_DIR."
+	[ "$MODE" = proxy ] && echo "  Proxy $WEB_PATH/meshinfo/ to $MESHINFO_URL (see frontend/deploy/nginx-proxy.conf)."
+fi
 echo "  Config:  $CONFIG"
 echo ""
