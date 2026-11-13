@@ -180,6 +180,41 @@ def _is_firmware(version: str, fw_type: str, version_cutoff: int, nightly_cutoff
 
     return False
 
+
+LEGACY_MESH_IFACES = ('wlan0', 'wlan1', 'br-nomesh', 'eth0.3975', 'eth1.3975', 'br0')
+
+
+def _usable_ip(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or value.lower() == 'none' or value.startswith('169.254.'):
+        return None
+    return value
+
+
+def mesh_ip_from_sysinfo(data: Dict) -> Optional[str]:
+    """Return the node's mesh IP from a sysinfo payload.
+
+    Current firmware puts the mesh IP on br-mesh and gives wlan/dtdlink
+    169.254.x.x link-local addresses; br-lan is the LAN, never the mesh IP.
+    """
+    if not isinstance(data, dict):
+        return None
+    interfaces = [i for i in (data.get('interfaces') or []) if isinstance(i, dict)]
+    by_name = {i.get('name'): _usable_ip(i.get('ip')) for i in interfaces}
+
+    if by_name.get('br-mesh'):
+        return by_name['br-mesh']
+    top_level = _usable_ip(data.get('ip'))
+    if top_level:
+        return top_level
+    for name in LEGACY_MESH_IFACES:
+        ip = by_name.get(name)
+        if ip and ip.startswith('10.'):
+            return ip
+    return None
+
 # ============================================================================
 # Configuration Management
 # ============================================================================
@@ -588,6 +623,16 @@ class MySQLAdapter:
                 result = await cur.execute(sql, (days,))
                 logging.info(f"Expired {result} old nodes not seen in {days} days")
 
+    async def purge_link_local_nodes(self):
+        """Delete rows keyed on a 169.254.x.x address; nodes are keyed on their mesh IP"""
+        sql_db_tbl_node = self.config.get('database', 'table_node', 'node_info')
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                sql = f"DELETE FROM `{sql_db_tbl_node}` WHERE wlan_ip LIKE %s"
+                result = await cur.execute(sql, ('169.254.%',))
+                if result:
+                    logging.info(f"Purged {result} nodes stored under a link-local IP")
+
     async def flush_database(self):
         """Truncate the node_info table"""
         async with self.pool.acquire() as conn:
@@ -823,13 +868,8 @@ class NodePoller:
                     if name == 'wlan0' or name == 'wlan1':
                         if 'mac' in iface:
                             node_info.wifi_mac_address = iface['mac']
-                        if ip_addr and ip_addr != 'none':
-                            node_info.wlan_ip = ip_addr
                     elif name == 'br-lan' and ip_addr and ip_addr != 'none':
                         node_info.lan_ip = ip_addr
-                    elif name in ['eth1.3975', 'eth0.3975', 'br-nomesh', 'br0']:
-                        if ip_addr and ip_addr != 'none' and ip_addr.startswith('10.'):
-                            node_info.wlan_ip = ip_addr
             
             elif key == 'services_local' and isinstance(value, list):
                 node_info.services = pickle.dumps(value).hex()
@@ -846,6 +886,7 @@ class NodePoller:
             elif key == 'mesh_supernode':
                 node_info.mesh_supernode = 'true' if value in [1, '1', True, 'true'] else 'false'
         
+        node_info.wlan_ip = mesh_ip_from_sysinfo(data) or ip
         return node_info
 
     @staticmethod
@@ -1178,6 +1219,11 @@ class MeshPollingDaemon:
                 await self.db.expire_old_nodes(expire_nodes_days)
             except Exception as e:
                 self.logger.warning(f"Failed to expire old nodes: {e}")
+
+        try:
+            await self.db.purge_link_local_nodes()
+        except Exception as e:
+            self.logger.warning(f"Failed to purge link-local nodes: {e}")
         
         self.logger.info(f"Poll cycle completed in {elapsed:.2f} seconds ({elapsed/60:.2f} minutes)")
         self._log_statistics()
@@ -1197,27 +1243,7 @@ class MeshPollingDaemon:
         if nodes_payload and isinstance(nodes_payload, dict):
             nodes_list = nodes_payload.get('nodes', []) or []
 
-        # Determine nodelistNode IP from interfaces (prefer 10.x mesh address)
-        nodelistNode_ip = None
-        if nodes_payload and isinstance(nodes_payload, dict):
-            interfaces = nodes_payload.get('interfaces', []) or []
-            # Prefer br-nomesh 10.x (matches NodePoller default selection) else first 10.x
-            for iface in interfaces:
-                if isinstance(iface, dict) and iface.get('name') == 'br-nomesh':
-                    ip_candidate = iface.get('ip')
-                    if ip_candidate and ip_candidate.startswith('10.'):
-                        nodelistNode_ip = ip_candidate
-                        break
-            if not nodelistNode_ip:
-                for iface in interfaces:
-                    if not isinstance(iface, dict):
-                        continue
-                    iface_ip = iface.get('ip')
-                    if iface_ip and iface_ip != 'none' and iface_ip != 'None':
-                        nodelistNode_ip = iface_ip
-                        if iface_ip.startswith('10.'):
-                            break
-
+        nodelistNode_ip = mesh_ip_from_sysinfo(nodes_payload)
         self.nodelistNode_ip = nodelistNode_ip or self.nodelistNode
 
         # Build link map from LQM (preferred) or link_info (fallback)
