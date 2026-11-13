@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# Nodographer installer for a clean Debian 13 (trixie) Proxmox container
-# ----------------------------------------------------------------------
-# Run as root inside the container:
+# Nodographer installer for a clean Debian 13 (trixie) Proxmox container or VM
+# ---------------------------------------------------------------------------
+# Run as root inside the container or VM:
 #
 #   apt update && apt install -y curl
 #   curl -fsSLO https://raw.githubusercontent.com/K1RKS/nodographer/main/lxc-install.sh
@@ -307,7 +307,10 @@ if [ "$WANT_MESHINFO" = yes ]; then
 	[ "$WITH_NGINX" = yes ] && echo "                http://$IP/api/v1/status.json"
 	echo "  Logs:         journalctl -fu meshinfo-poller.service"
 fi
-[ "$VIRT" = lxc ] || [ -z "$VIRT" ] || say "Detected container type '$VIRT' (expected lxc)."
+case "$VIRT" in
+	lxc|none|"") ;;
+	*) say "Detected container type '$VIRT' (expected lxc or a VM)." ;;
+esac
 echo ""
 echo "Next, configure it as $SERVICE_USER:"
 echo ""

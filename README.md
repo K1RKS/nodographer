@@ -51,9 +51,20 @@ The code lives in one git checkout (for example `/srv/meshmap`). Each VM install
 
 ## Installation
 
-### Proxmox container (Debian 13), guided
+There are two ways to install. Both put the code in `/srv/meshmap`.
 
-For a new Debian 13 (trixie) LXC container, `lxc-install.sh` does the whole install. Create the container from the Debian 13 template (keep **Nesting** enabled, which is the default for unprivileged containers), then run this as root on its console:
+- **Option 1, one guided script** (recommended for a fresh Debian 13 VM or Proxmox container): download `lxc-install.sh` and run it. It clones the repository and runs everything else itself.
+- **Option 2, clone and run the installers yourself** (Debian 13, Debian 12 or Ubuntu): clone to `/srv/meshmap`, then run `INSTALL.sh`.
+
+Don't clone into `/` or into a home directory. Option 1 does the cloning for you; with option 2, clone to `/srv/meshmap` as shown.
+
+### Option 1: guided install on a fresh Debian 13 VM or Proxmox container
+
+`lxc-install.sh` is written for a clean Debian 13 (trixie) Proxmox container and works the same on a clean Debian 13 VM. You only download this one script. It installs `git` and the other packages it needs, clones `https://github.com/K1RKS/nodographer.git` into `/srv/meshmap`, and runs the component installers.
+
+For a Proxmox container, create it from the Debian 13 template and keep **Nesting** enabled (the default for unprivileged containers). On a VM there is nothing to prepare.
+
+Run this as root on the new VM or container. Any directory works, for example `/root`; only the installer is downloaded there:
 
 ```bash
 apt update && apt install -y curl
@@ -64,7 +75,7 @@ bash lxc-install.sh
 It asks:
 - which parts to install: both, meshinfo only, or the map only;
 - the user that runs the services and owns the configuration (default `meshmap`), and whether to give it a password for SSH and sudo;
-- whether to install and configure nginx. With nginx it replaces the default site, so `http://<container>/` goes to the map, and on a meshinfo host the API is also served at `/api/v1/` on port 80;
+- whether to install and configure nginx. With nginx it replaces the default site, so `http://<host>/` goes to the map, and on a meshinfo host the API is also served at `/api/v1/` on port 80;
 - for a map-only container, where its data comes from (`proxy`, `direct` or `legacy`) and the meshinfo API URL.
 
 It then installs packages, creates the user, clones the repository to `/srv/meshmap` as that user, and runs `meshinfo/INSTALL.sh` and/or `frontend/INSTALL.sh`. The database gets a random password. The config files are owned by the new user, and that user may restart the meshinfo services without a password.
@@ -72,9 +83,11 @@ It then installs packages, creates the user, clones the repository to `/srv/mesh
 Then configure as that user:
 
 ```bash
-su - meshmap            # or: ssh meshmap@<container>, if you set a password
+su - meshmap            # or: ssh meshmap@<host>, if you set a password
 ./nodographer-setup
 ```
+
+Set the AREDN topology node there, then the map center and tile servers. The scanner starts with the default node `localnode.local.mesh`, and the map stays empty until the first scan finishes (several minutes on a large mesh).
 
 The setup script (`setup.sh`, linked as `~/nodographer-setup`) asks for whatever is installed, offering the current values as defaults:
 - **meshinfo:** topology node (`nodelistNode`, tested on entry), time zone, scan interval, parallel polls, hop counts, retention, KML name, and allowed API origins. It then restarts the services.
@@ -82,21 +95,25 @@ The setup script (`setup.sh`, linked as `~/nodographer-setup`) asks for whatever
 
 Run it again any time to change settings. Every `lxc-install.sh` question can be answered in advance with an environment variable for unattended installs; see the top of the script.
 
-If a meshinfo service fails with `226/NAMESPACE`, enable **Options > Features > Nesting** for the container in Proxmox, restart the container, and restart the services.
+If a meshinfo service fails with `226/NAMESPACE` in a Proxmox container, enable **Options > Features > Nesting** for the container, restart the container, and restart the services.
 
-### Clone the repository
+For a split install, run the script on each VM: choose `meshinfo` on one and `frontend` on the other, and see the firewall note under option 2.
+
+### Option 2: clone and run the installers
+
+#### Clone the repository
 
 On every VM that runs either part:
 
 ```bash
 sudo apt update && sudo apt install -y git
-sudo git clone https://github.com/AI7BQ/nodographer.git /srv/meshmap
+sudo git clone https://github.com/K1RKS/nodographer.git /srv/meshmap
 sudo chown -R "$USER":"$USER" /srv/meshmap
 ```
 
 Keep the checkout somewhere the web server and the `meshmap` service user can read, such as `/srv/meshmap`. Avoid a home directory: many distributions make home directories private, and the services are sandboxed with `ProtectHome=read-only`. The checkout can be owned by your login user (`update.sh` runs `git` as the owner). The installers also work when run directly as root.
 
-### Quick start
+#### Run the installer
 
 | Layout | Command |
 | --- | --- |
@@ -108,13 +125,21 @@ The installers are safe to re-run. `-y` skips the prompts.
 
 For a split install, set up the meshinfo VM first. Then open the API port to the frontend VM (TCP 8090 by default, for example `sudo ufw allow from <frontend-ip> to any port 8090 proto tcp`), and install the frontend VM in `proxy` or `direct` mode.
 
-### After installing: configure and restart
+#### After installing: configure and restart
 
-The installer starts the services with default settings, so set at least the topology node before you expect a map:
+The installer starts the services with default settings, so set at least the topology node before you expect a map. The easiest way is the guided setup script, which asks for each setting and restarts the services:
+
+```bash
+sudo /srv/meshmap/setup.sh
+```
+
+Or edit the files by hand:
 
 1. Edit `/srv/meshmap/meshinfo/meshinfo.toml` and set `[polling] nodelistNode` to an AREDN node this VM can reach, for example `localnode.local.mesh` when the VM sits behind a mesh node and uses its DNS. If you set `DB_PASS` during install, the password is already filled in.
 2. Restart the scanner: `sudo systemctl restart meshinfo-poller.service`.
 3. On the frontend VM, edit `/srv/meshmap/frontend/config/nodographer.json` for the map title, center, zoom, units and tile servers. These are static files, so a browser reload picks up the changes; no restart is needed.
+
+With option 2 the config files belong to root, so use `sudo` for the setup script or your editor.
 
 The first scan polls every node at full speed and can take several minutes on a large mesh. Until it finishes there is no snapshot: the API answers `503` and the map has no nodes. Watch progress with `sudo journalctl -fu meshinfo-poller.service` or `curl -s http://localhost:8090/api/v1/status.json`.
 
