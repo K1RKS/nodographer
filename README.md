@@ -652,8 +652,9 @@ The poller writes these files into every snapshot, next to `map_data.json`. Beca
   - `id` is the lowercased short hostname (for example `k1rks-hap-ac3`). It matches `links[].id`, so a link can be followed to its peer node.
   - `meshrf.freq` is a number in MHz, or `null` when unknown.
   - `antenna` is `{"height_m", "height_ref", "azimuth_deg", "elevation_deg", "gain_dbi", "beamwidth_deg", "description"}`. Each value is `null` when unset, and `0` is a real value. `height_ref` is always `"agl"`.
-  - `links` is `[{hostname, id, linkType, distance_km, bearing_deg, signal_dbm, noise_dbm}]`. Distance and bearing (degrees from this node toward the peer) are only computed for RF links. Values are `null` when unknown.
+  - `links` is `[{hostname, id, linkType, distance_km, bearing_deg, signal_dbm, noise_dbm, lat, lon}]`. Distance and bearing (degrees from this node toward the peer) are only computed for RF links. `lat`/`lon` is the peer's position, from its own record or from this node's link-quality data, so a peer that has no `nodeInfo` entry of its own can still be placed. Values are `null` when unknown.
   - The top-level `units` object lists the units: `{"height":"m","height_ref":"agl","freq":"MHz","distance":"km","azimuth":"deg","elevation":"deg","gain":"dBi","beamwidth":"deg","signal":"dBm"}`.
+  - These fields only change by addition: new keys may appear, but existing keys keep their names, units and meaning. Tools such as [Fresnel KML](https://github.com/K1RKS/fresnel_kml) read `nodes.json` from the meshinfo API on their own server, with `If-None-Match` (most requests get a `304`) and gzip, and read `status.json` to explain stale data.
 
 Antenna height comes from the node's **Antenna height above ground** setting (metres). AREDN does not report ground elevation or height above sea level, so tools that need an ASL height (for example Fresnel-zone profiles) must add ground elevation from a DEM.
 

@@ -518,6 +518,9 @@ def _json_link(dest_ip: str, link: Dict) -> Dict:
         'bearing_deg': _num(link.get('bearing')),
         'signal_dbm': _num(link.get('signal')),
         'noise_dbm': _num(link.get('noise')),
+        # The peer's position, from its own record or the LQM tracker; set even when the peer has none
+        'lat': _coord(link.get('linkLat')),
+        'lon': _coord(link.get('linkLon')),
     }
 
 

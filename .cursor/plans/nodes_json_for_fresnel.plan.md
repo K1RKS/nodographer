@@ -4,13 +4,13 @@ overview: Fresnel KML's server reads the meshinfo API directly (nodes.json and s
 todos:
   - id: link-position
     content: "exporters._json_link: add lat/lon from linkLat/linkLon (null when unknown)"
-    status: pending
+    status: completed
   - id: tests
     content: "New tests/test_exporters.py: build_json link lat/lon present when known, null otherwise; existing link fields unchanged"
-    status: pending
+    status: completed
   - id: docs
     content: "README: document nodes.json node and link fields (including the new link lat/lon) and that they only change additively; note Fresnel KML reads nodes.json and status.json from the API"
-    status: pending
+    status: completed
   - id: verify
     content: "pytest; one poll cycle on the meshinfo host; curl /api/v1/nodes.json and check link lat/lon; curl status.json from the Fresnel server (internal-nginx)"
     status: pending
