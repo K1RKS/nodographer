@@ -65,9 +65,10 @@ fi
 
 install_packages() {
 	print_header "Packages"
-	print_step "Installing python3, python3-venv, python3-pip, mariadb-server..."
+	print_step "Installing python3, python3-venv, python3-pip, mariadb-server, traceroute..."
 	apt-get update -qq
-	apt-get install -y python3 python3-venv python3-pip mariadb-server > /dev/null
+	# traceroute: hop-count probing ([hops] enableHopCount)
+	apt-get install -y python3 python3-venv python3-pip mariadb-server traceroute > /dev/null
 	print_success "Packages installed"
 }
 
@@ -112,6 +113,7 @@ ensure_venv() {
 
 ensure_database() {
 	print_header "Database"
+	systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true
 	mysql -u root <<SQL
 CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';

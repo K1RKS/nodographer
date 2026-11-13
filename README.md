@@ -38,8 +38,8 @@ The code lives in one git checkout (for example `/srv/meshmap`). Each VM install
 
 - Linux with systemd (developed and tested on Debian 13, works on any systemd-based distribution)
 - `git`
-- **meshinfo VM:** Python 3.10 or higher with `python3-venv`, and MariaDB/MySQL
-- **frontend VM:** a web server (Nginx used for development and testing) and `python3` (used by the installer only)
+- **meshinfo VM:** Python 3.10 or higher with `python3-venv`, MariaDB/MySQL, and `traceroute`. The installer uses `apt`, so Debian or Ubuntu.
+- **frontend VM:** a web server (Nginx used for development and testing) and `python3` (used by the installer only; installed if missing)
 
 ## Features
 
@@ -56,11 +56,12 @@ The code lives in one git checkout (for example `/srv/meshmap`). Each VM install
 On every VM that runs either part:
 
 ```bash
-sudo mkdir -p /srv
-sudo chown "$USER":"$USER" /srv
-cd /srv
-git clone https://github.com/AI7BQ/nodographer.git meshmap
+sudo apt update && sudo apt install -y git
+sudo git clone https://github.com/AI7BQ/nodographer.git /srv/meshmap
+sudo chown -R "$USER":"$USER" /srv/meshmap
 ```
+
+Keep the checkout somewhere the web server and the `meshmap` service user can read, such as `/srv/meshmap`. Avoid a home directory: many distributions make home directories private, and the services are sandboxed with `ProtectHome=read-only`. The checkout can be owned by your login user (`update.sh` runs `git` as the owner). The installers also work when run directly as root.
 
 ### Quick start
 
@@ -72,8 +73,22 @@ git clone https://github.com/AI7BQ/nodographer.git meshmap
 
 The installers are safe to re-run. `-y` skips the prompts.
 
+For a split install, set up the meshinfo VM first. Then open the API port to the frontend VM (TCP 8090 by default, for example `sudo ufw allow from <frontend-ip> to any port 8090 proto tcp`), and install the frontend VM in `proxy` or `direct` mode.
+
+### After installing: configure and restart
+
+The installer starts the services with default settings, so set at least the topology node before you expect a map:
+
+1. Edit `/srv/meshmap/meshinfo/meshinfo.toml` and set `[polling] nodelistNode` to an AREDN node this VM can reach, for example `localnode.local.mesh` when the VM sits behind a mesh node and uses its DNS. If you set `DB_PASS` during install, the password is already filled in.
+2. Restart the scanner: `sudo systemctl restart meshinfo-poller.service`.
+3. On the frontend VM, edit `/srv/meshmap/frontend/config/nodographer.json` for the map title, center, zoom, units and tile servers. These are static files, so a browser reload picks up the changes; no restart is needed.
+
+The first scan polls every node at full speed and can take several minutes on a large mesh. Until it finishes there is no snapshot: the API answers `503` and the map has no nodes. Watch progress with `sudo journalctl -fu meshinfo-poller.service` or `curl -s http://localhost:8090/api/v1/status.json`.
+
+The top-level `settings.toml` is the legacy single-file config. New installs do not use it; it is only read when migrating an old install (see [Migrating from a single `meshmapPoller` install](#migrating-from-a-single-meshmappoller-install)).
+
 **`meshinfo/INSTALL.sh`** does the following:
-- Installs Python and MariaDB.
+- Installs Python, MariaDB and `traceroute` (used for hop counts).
 - Creates the `meshmap` service user, the `meshinfo/venv` virtual environment, and the database.
 - Writes `meshinfo/meshinfo.toml` from `meshinfo.example.toml`.
 - Creates the data directory `/var/lib/meshinfo` (owner `meshmap`, group `www-data`, mode `2750`).
@@ -108,7 +123,7 @@ In `proxy` mode the browser only talks to the frontend host. That avoids CORS an
 **meshinfo VM:**
 
 ```bash
-sudo apt install -y python3 python3-venv python3-pip mariadb-server
+sudo apt install -y python3 python3-venv python3-pip mariadb-server traceroute
 sudo useradd -r -s /bin/false -d /srv/meshmap/meshinfo -c "meshinfo poller" meshmap
 
 cd /srv/meshmap/meshinfo
@@ -140,21 +155,42 @@ The database tables are created automatically when the poller first connects. Fo
 **Frontend VM (local mode shown):**
 
 ```bash
+sudo apt install -y nginx
 sudo ln -s /srv/meshmap/frontend /var/www/html/meshmap
 sudo ln -s /var/lib/meshinfo /srv/meshmap/frontend/meshinfo
 cp /srv/meshmap/frontend/config/nodographer.example.json /srv/meshmap/frontend/config/nodographer.json
 ```
 
+For `proxy` mode, set `"baseUrl": "meshinfo/"` in `nodographer.json`, and add a `location` block like [`frontend/deploy/nginx-proxy.conf`](frontend/deploy/nginx-proxy.conf) to your nginx server block.
+
 ### Smoke test
 
+On the meshinfo VM, once the first scan has finished:
+
 ```bash
-cd /srv/meshmap/meshinfo
-sudo -u meshmap venv/bin/python3 meshinfoPoller.py --once
-ls -l /var/lib/meshinfo/current/
-curl -s http://localhost:8090/api/v1/status.json
+systemctl is-active meshinfo-poller.service meshinfo-api.service
+curl -s http://localhost:8090/api/v1/status.json   # "state": "idle", "currentSnapshot": "<id>"
+ls -l /var/lib/meshinfo/current/                   # map_data.json, nodes.kml, ...
+curl -s http://localhost:8090/healthz              # {"ok": true, ...}
+```
+
+On the frontend VM:
+
+```bash
+curl -sI http://localhost/meshmap/config/nodographer.json | head -1
+curl -s  http://localhost/meshmap/meshinfo/current/map_data.json | head -c 200   # local mode
+curl -s  http://localhost/meshmap/meshinfo/map_data.json | head -c 200           # proxy mode
 ```
 
 Then open `http://<hostname>/meshmap/`.
+
+To run a single scan by hand, stop the service first so two pollers don't run at once:
+
+```bash
+sudo systemctl stop meshinfo-poller.service
+cd /srv/meshmap/meshinfo && sudo -u meshmap venv/bin/python3 meshinfoPoller.py --once
+sudo systemctl start meshinfo-poller.service
+```
 
 ### Service management
 

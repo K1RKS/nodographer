@@ -17,6 +17,10 @@
 #                     meshinfo/meshinfo.toml, else /var/lib/meshinfo)
 #   --web-root DIR    web server document root (default /var/www/html)
 #   --web-name NAME   URL path / symlink name under the web root (default meshmap)
+#   --from-legacy-settings
+#                     build a missing nodographer.json from the legacy
+#                     settings.toml instead of nodographer.example.json
+#                     (update.sh uses this when migrating an old install)
 #   -y                don't prompt
 #
 
@@ -33,6 +37,7 @@ MESHINFO_URL=""
 DATA_DIR=""
 WEB_ROOT="/var/www/html"
 WEB_NAME="meshmap"
+FROM_LEGACY=0
 ASSUME_YES="${ASSUME_YES:-0}"
 
 while [ $# -gt 0 ]; do
@@ -42,13 +47,25 @@ while [ $# -gt 0 ]; do
 		--data-dir) DATA_DIR="$2"; shift 2 ;;
 		--web-root) WEB_ROOT="$2"; shift 2 ;;
 		--web-name) WEB_NAME="$2"; shift 2 ;;
+		--from-legacy-settings) FROM_LEGACY=1; shift ;;
 		-y|--yes) ASSUME_YES=1; shift ;;
-		-h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+		-h|--help) sed -n '2,28p' "$0"; exit 0 ;;
 		*) print_error "Unknown argument: $1"; exit 1 ;;
 	esac
 done
 
 require_root
+
+if ! command -v python3 >/dev/null; then
+	print_step "Installing python3 (used by this installer)..."
+	apt-get update -qq
+	apt-get install -y python3 > /dev/null
+fi
+# The meshinfo venv has tomli, which Python < 3.11 needs to read TOML
+PYTHON=python3
+if [ -x "$INSTALL_DIR/meshinfo/venv/bin/python3" ]; then
+	PYTHON="$INSTALL_DIR/meshinfo/venv/bin/python3"
+fi
 
 CONFIG="$FRONTEND_DIR/config/nodographer.json"
 WEB_LINK="$WEB_ROOT/$WEB_NAME"
@@ -90,7 +107,7 @@ esac
 
 if [ "$MODE" = local ] && [ -z "$DATA_DIR" ]; then
 	if [ -f "$INSTALL_DIR/meshinfo/meshinfo.toml" ]; then
-		DATA_DIR="$(python3 - "$INSTALL_DIR/meshinfo/meshinfo.toml" <<'PY'
+		DATA_DIR="$("$PYTHON" - "$INSTALL_DIR/meshinfo/meshinfo.toml" <<'PY'
 import sys
 try:
     import tomllib
@@ -127,6 +144,7 @@ if ! command -v nginx >/dev/null && ! command -v apache2 >/dev/null; then
 	print_step "No web server found; installing nginx..."
 	apt-get update -qq
 	apt-get install -y nginx > /dev/null
+	systemctl enable --now nginx >/dev/null 2>&1 || true
 fi
 if [ -L "$WEB_LINK" ] || [ ! -e "$WEB_LINK" ]; then
 	ln -sfn "$FRONTEND_DIR" "$WEB_LINK"
@@ -138,9 +156,9 @@ fi
 
 print_header "Configuration"
 if [ ! -f "$CONFIG" ]; then
-	if [ -f "$INSTALL_DIR/settings.toml" ]; then
+	if [ "$FROM_LEGACY" = 1 ] && [ -f "$INSTALL_DIR/settings.toml" ]; then
 		print_step "Creating $CONFIG from legacy settings.toml"
-		python3 "$INSTALL_DIR/meshinfo/tools/migrate_settings.py" --only frontend \
+		"$PYTHON" "$INSTALL_DIR/meshinfo/tools/migrate_settings.py" --only frontend \
 			--settings "$INSTALL_DIR/settings.toml" --frontend-out "$CONFIG" --base-url "$BASE_URL"
 	else
 		print_step "Creating $CONFIG from nodographer.example.json"

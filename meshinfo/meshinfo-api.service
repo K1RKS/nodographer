@@ -22,7 +22,6 @@ ProtectSystem=strict
 ProtectHome=read-only
 ReadOnlyPaths=@DATA_DIR@
 CapabilityBoundingSet=
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 StandardOutput=journal
 StandardError=journal

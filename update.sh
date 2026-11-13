@@ -48,10 +48,6 @@ done
 require_root
 
 ACTUAL_USER="${SUDO_USER:-$USER}"
-if [ "$ACTUAL_USER" = "root" ] && [ "${ALLOW_ROOT:-0}" != 1 ]; then
-	print_error "Please run this script with sudo from a regular user account, not as root"
-	exit 1
-fi
 
 # Prefer an explicit INSTALL_DIR; else the script's directory if it is a clone; else /srv/meshmap
 if [ -n "${INSTALL_DIR:-}" ]; then
@@ -177,10 +173,12 @@ fi
 if [ "$HAS_FRONTEND" = 1 ] && [ ! -f "$INSTALL_DIR/frontend/config/nodographer.json" ]; then
 	print_header "Frontend configuration"
 	if [ "$HAS_MESHINFO" = 1 ]; then
-		"$INSTALL_DIR/frontend/INSTALL.sh" -y --mode local --web-root "$(dirname "$WEB_LINK")" --web-name "$(basename "$WEB_LINK")"
+		FRONTEND_MODE=local
 	else
-		"$INSTALL_DIR/frontend/INSTALL.sh" -y --mode legacy --web-root "$(dirname "$WEB_LINK")" --web-name "$(basename "$WEB_LINK")"
+		FRONTEND_MODE=legacy
 	fi
+	"$INSTALL_DIR/frontend/INSTALL.sh" -y --mode "$FRONTEND_MODE" --from-legacy-settings \
+		--web-root "$(dirname "$WEB_LINK")" --web-name "$(basename "$WEB_LINK")"
 fi
 
 print_success "Update complete: $(run_git rev-parse --abbrev-ref HEAD) @ $(run_git rev-parse --short HEAD)"

@@ -56,9 +56,11 @@ if [ "$WANT_MESHINFO" = 0 ] && [ "$WANT_FRONTEND" = 0 ]; then
 fi
 
 require_root
-if [ "${SUDO_USER:-$USER}" = "root" ] && [ "${ALLOW_ROOT:-0}" != 1 ]; then
-	print_error "Please run this script with sudo from a regular user account, not as root"
-	exit 1
+
+# meshinfo/INSTALL.sh retires the legacy unit, so check for it first
+FRONTEND_ARGS=()
+if [ -e /etc/systemd/system/meshmapPoller.service ]; then
+	FRONTEND_ARGS+=(--from-legacy-settings)
 fi
 
 if [ "$WANT_MESHINFO" = 1 ]; then
@@ -67,10 +69,9 @@ fi
 
 if [ "$WANT_FRONTEND" = 1 ]; then
 	if [ "$WANT_MESHINFO" = 1 ] && [ ${#PASS[@]} -eq 0 ]; then
-		"$SCRIPT_DIR/frontend/INSTALL.sh" --mode local
-	else
-		"$SCRIPT_DIR/frontend/INSTALL.sh" "${PASS[@]}"
+		FRONTEND_ARGS+=(--mode local)
 	fi
+	"$SCRIPT_DIR/frontend/INSTALL.sh" "${FRONTEND_ARGS[@]}" "${PASS[@]}"
 fi
 
 print_success "Installation completed successfully!"
