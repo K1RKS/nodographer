@@ -8,11 +8,11 @@
 #   frontend   static Leaflet map + node report               (frontend/INSTALL.sh)
 #
 # Usage:
-#   sudo ./INSTALL.sh               # both on this VM; frontend reads meshinfo locally
+#   sudo ./INSTALL.sh               # asks: both, meshinfo only, or frontend only
 #   sudo ./INSTALL.sh --meshinfo    # scanner + API only
 #   sudo ./INSTALL.sh --frontend [frontend/INSTALL.sh options]
 #                                   # map only, e.g. --mode proxy --meshinfo-url http://host:8090/api/v1/
-#   sudo ./INSTALL.sh -y            # don't prompt
+#   sudo ./INSTALL.sh -y            # don't prompt; installs both unless a flag picks one
 #
 
 echo "Nodographer -- A Babel-aware AREDN Mesh Network Map"
@@ -51,9 +51,27 @@ for arg in "$@"; do
 	esac
 done
 if [ "$WANT_MESHINFO" = 0 ] && [ "$WANT_FRONTEND" = 0 ]; then
-	WANT_MESHINFO=1
-	WANT_FRONTEND=1
+	CHOICE=1
+	if [ "${ASSUME_YES:-0}" != 1 ] && [ -t 0 ]; then
+		echo "Which parts should this host run?"
+		echo "  1) both      scanner + data API, and the map reading it locally"
+		echo "  2) meshinfo  scanner + data API only (a map elsewhere reads it)"
+		echo "  3) frontend  the map only (reads a meshinfo API on another host)"
+		read -r -p "Choose 1-3 [1]: " CHOICE
+		CHOICE="${CHOICE:-1}"
+	fi
+	case "$CHOICE" in
+		1|both) WANT_MESHINFO=1; WANT_FRONTEND=1 ;;
+		2|meshinfo) WANT_MESHINFO=1 ;;
+		3|frontend) WANT_FRONTEND=1 ;;
+		*) print_error "Invalid choice: $CHOICE"; exit 1 ;;
+	esac
 fi
+PARTS=()
+[ "$WANT_MESHINFO" = 1 ] && PARTS+=(meshinfo)
+[ "$WANT_FRONTEND" = 1 ] && PARTS+=(frontend)
+echo "Installing: ${PARTS[*]}"
+echo ""
 
 require_root
 

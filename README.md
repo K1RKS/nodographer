@@ -115,13 +115,19 @@ Keep the checkout somewhere the web server and the `meshmap` service user can re
 
 #### Run the installer
 
+```bash
+sudo /srv/meshmap/INSTALL.sh
+```
+
+It asks which parts to install: both, meshinfo only, or frontend only. To skip the question, pass the part as a flag:
+
 | Layout | Command |
 | --- | --- |
-| Everything on one VM | `sudo /srv/meshmap/INSTALL.sh` |
+| Everything on one VM | `sudo /srv/meshmap/INSTALL.sh` and choose `both` |
 | meshinfo VM (scanner + API) | `sudo /srv/meshmap/INSTALL.sh --meshinfo` |
-| Frontend VM | `sudo /srv/meshmap/INSTALL.sh --frontend` (prompts for the data source) |
+| Frontend VM | `sudo /srv/meshmap/INSTALL.sh --frontend` (then asks for the data source) |
 
-The installers are safe to re-run. `-y` skips the prompts.
+The installers are safe to re-run. `-y` skips the prompts; without a flag it then installs both.
 
 For a split install, set up the meshinfo VM first. Then open the API port to the frontend VM (TCP 8090 by default, for example `sudo ufw allow from <frontend-ip> to any port 8090 proto tcp`), and install the frontend VM in `proxy` or `direct` mode.
 
