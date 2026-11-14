@@ -108,6 +108,24 @@ case "$MODE" in
 			read -r -p "meshinfo API URL (e.g. http://meshinfo-host:8090/api/v1/): " MESHINFO_URL
 		fi
 		[[ "$MESHINFO_URL" == */ ]] || MESHINFO_URL="$MESHINFO_URL/"
+		while ! check_meshinfo_url "$MESHINFO_URL"; do
+			if [ "$ASSUME_YES" = 1 ]; then
+				[ -n "$SUGGESTED_URL" ] && echo "  To use it, rerun with --meshinfo-url $SUGGESTED_URL"
+				print_step "Continuing with $MESHINFO_URL; the map stays empty until it answers."
+				break
+			fi
+			if [ -n "$SUGGESTED_URL" ] && confirm "Use $SUGGESTED_URL instead?"; then
+				MESHINFO_URL="$SUGGESTED_URL"
+				break
+			fi
+			read -r -p "Correct the URL, or press Enter to keep $MESHINFO_URL: " reply
+			if [ -z "$reply" ]; then
+				print_step "Keeping $MESHINFO_URL; the map stays empty until it answers."
+				break
+			fi
+			MESHINFO_URL="$reply"
+			[[ "$MESHINFO_URL" == */ ]] || MESHINFO_URL="$MESHINFO_URL/"
+		done
 		;;
 	*) print_error "Unknown mode: $MODE (local, proxy, direct, legacy)"; exit 1 ;;
 esac

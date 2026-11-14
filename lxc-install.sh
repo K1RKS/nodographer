@@ -41,6 +41,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 say() { echo -e "${YELLOW}➜${NC} $1"; }
 ok() { echo -e "${GREEN}✓${NC} $1"; }
+warn() { echo -e "${RED}✗${NC} $1"; }
 die() { echo -e "${RED}✗${NC} $1" >&2; exit 1; }
 section() { echo -e "\n${GREEN}== $1 ==${NC}\n"; }
 
@@ -78,6 +79,76 @@ ask_yn() {
 		echo "  Answer y or n."
 		printf -v "$__var" '%s' ""
 	done
+}
+
+# The meshinfo URL checks run before the repository (and lib/install-common.sh)
+# is available, so they are copied here; keep both versions in step.
+
+# http_status URL: HTTP status of a HEAD request for URL, 000 when nothing answers
+http_status() {
+	curl -s -o /dev/null -I --connect-timeout 5 -m 10 -w '%{http_code}' "$1" 2>/dev/null || true
+}
+
+# meshinfo_probe URL: prints ok (map data available), nodata (meshinfo answers
+# but has not published a scan yet) or the HTTP status of map_data.json
+meshinfo_probe() {
+	local code
+	code="$(http_status "${1}map_data.json")"
+	if [ "$code" = 200 ]; then
+		echo ok
+	elif [ "$code" = 503 ] || [ "$(http_status "${1}status.json")" = 200 ]; then
+		echo nodata
+	else
+		echo "$code"
+	fi
+}
+
+# check_meshinfo_url URL: tests a meshinfo API URL (ending in /) from this host.
+# Returns 0 when it answers. Otherwise sets SUGGESTED_URL to a nearby URL on
+# the same host that does answer (standard /api/v1/ path, default port 8090).
+check_meshinfo_url() {
+	local url="$1" rest scheme hostport host path result cand
+	SUGGESTED_URL=""
+	if [[ ! "$url" =~ ^https?://[^/]+/ ]]; then
+		warn "$url is not an http:// or https:// URL"
+		return 1
+	fi
+	scheme="${url%%://*}"
+	rest="${url#*://}"
+	hostport="${rest%%/*}"
+	path="/${rest#*/}"
+	host="$hostport"
+	[[ "$hostport" =~ ^(.*):[0-9]+$ ]] && host="${BASH_REMATCH[1]}"
+	if [[ "$path" != */api/v1/ ]]; then
+		say "The path $path does not end in /api/v1/, where meshinfo serves its API."
+	fi
+	if ! command -v curl >/dev/null; then
+		say "curl is not installed; not testing $url"
+		return 0
+	fi
+	say "Testing $url ..."
+	result="$(meshinfo_probe "$url")"
+	case "$result" in
+		ok)
+			ok "meshinfo answers at $url"
+			return 0 ;;
+		nodata)
+			ok "meshinfo answers at $url (no scan published yet; the map fills in after the first one)"
+			return 0 ;;
+		000) warn "No answer from $hostport (wrong host name or port, or it is down)" ;;
+		*) warn "$hostport answered HTTP $result for ${url}map_data.json; check the path (normally /api/v1/)" ;;
+	esac
+	for cand in "$scheme://$hostport/api/v1/" "$scheme://$host:8090/api/v1/"; do
+		[ "$cand" = "$url" ] && continue
+		[ "$result" = 000 ] && [[ "$cand" == "$scheme://$hostport/"* ]] && continue
+		case "$(meshinfo_probe "$cand")" in
+			ok|nodata)
+				SUGGESTED_URL="$cand"
+				ok "meshinfo does answer at $cand"
+				break ;;
+		esac
+	done
+	return 1
 }
 
 [ "$EUID" -eq 0 ] || die "Run this as root inside the container."
@@ -158,6 +229,29 @@ if [ "$COMPONENTS" = frontend ]; then
 		ask MESHINFO_URL "meshinfo API URL (e.g. http://meshinfo-host:8090/api/v1/)" ""
 		[ -n "$MESHINFO_URL" ] || die "A meshinfo API URL is required for $FRONTEND_MODE mode"
 		[[ "$MESHINFO_URL" == */ ]] || MESHINFO_URL="$MESHINFO_URL/"
+		while ! check_meshinfo_url "$MESHINFO_URL"; do
+			if [ "$ASSUME_YES" = 1 ]; then
+				[ -n "$SUGGESTED_URL" ] && echo "  To use it, rerun with MESHINFO_URL=$SUGGESTED_URL"
+				say "Continuing with $MESHINFO_URL; the map stays empty until it answers."
+				break
+			fi
+			if [ -n "$SUGGESTED_URL" ]; then
+				unset USE_SUGGESTED
+				ask_yn USE_SUGGESTED "Use $SUGGESTED_URL instead?" yes
+				if [ "$USE_SUGGESTED" = yes ]; then
+					MESHINFO_URL="$SUGGESTED_URL"
+					break
+				fi
+			fi
+			unset NEW_URL
+			ask NEW_URL "Correct the URL, or press Enter to keep it" "$MESHINFO_URL"
+			[[ "$NEW_URL" == */ ]] || NEW_URL="$NEW_URL/"
+			if [ "$NEW_URL" = "$MESHINFO_URL" ]; then
+				say "Keeping $MESHINFO_URL; the map stays empty until it answers."
+				break
+			fi
+			MESHINFO_URL="$NEW_URL"
+		done
 	fi
 fi
 
@@ -284,13 +378,6 @@ if [ "$WANT_FRONTEND" = yes ]; then
 	fi
 	[ "$WITH_NGINX" = yes ] || ARGS+=(--no-web-server)
 	CONFIG_OWNER="$SERVICE_USER" "$INSTALL_DIR/frontend/INSTALL.sh" "${ARGS[@]}"
-	if [ -n "${MESHINFO_URL:-}" ]; then
-		if curl -fsS -m 10 "${MESHINFO_URL}status.json" > /dev/null 2>&1; then
-			ok "meshinfo API answers at ${MESHINFO_URL}status.json"
-		else
-			say "Could not read ${MESHINFO_URL}status.json yet; the map stays empty until it is reachable."
-		fi
-	fi
 fi
 
 ln -sfn "$INSTALL_DIR/setup.sh" "$USER_HOME/nodographer-setup"
