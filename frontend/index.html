@@ -70,6 +70,8 @@
 	<script src="js/meshmap-userLocation.js"></script>
 	<script src="js/meshmap-markerMenu.js"></script>
 	<script src="js/meshmap-addressSearch.js"></script>
+	<link rel="stylesheet" href="css/meshmap-coverage.css">
+	<script src="js/meshmap-coverage.js"></script>
 
 	<script src="js/nodographer-config.js"></script>
 	<script src="js/meshmap-local-tiles.js"></script>
@@ -361,6 +363,9 @@ groupedOverlays = {
 		"<img src='images/waves2.png' height='20' title='SnR'> SnR": RFLinksSnR,
 		"<img src='images/quality.svg' height='20' title='Link Quality'> Link Quality": RFLinksQual,
 		"<img src='images/cost.svg' height='20' title='Link Cost'> Link Cost": RFLinksCost,
+	},
+	"Coverage": {
+		"Radio Coverage": (window.MeshmapCoverage ? MeshmapCoverage.layer : L.layerGroup())
 	}
 };
 
@@ -605,6 +610,9 @@ createDeviceMarkers(allDevices);
 if (window.MeshmapMarkerMenu) {
 	MeshmapMarkerMenu.init(map);
 	MeshmapMarkerMenu.attachNodeMarkers(oms.getMarkers(), oms);
+}
+if (window.MeshmapCoverage) {
+	MeshmapCoverage.init(map, allDevices, mapInfo);
 }
 
 //change link lines based on different metrics

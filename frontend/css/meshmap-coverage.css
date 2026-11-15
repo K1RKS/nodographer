@@ -1,0 +1,449 @@
+/* Radio coverage filter control */
+
+.meshmap-coverage {
+	position: relative;
+	background: #fff;
+}
+
+.leaflet-bar a.meshmap-coverage-button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	height: 30px;
+	color: #333;
+}
+
+.meshmap-coverage-expanded a.meshmap-coverage-button {
+	color: #b8860b;
+}
+
+.meshmap-coverage-panel {
+	display: none;
+	position: absolute;
+	top: -2px;
+	left: calc(100% + 6px);
+	width: 320px;
+	max-height: min(70vh, 560px);
+	overflow-x: hidden;
+	overflow-y: auto;
+	background: #fff;
+	border: 1px solid #bbb;
+	border-radius: 4px;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+	font-size: 13px;
+	z-index: 1000;
+	padding: 8px 10px 10px;
+	box-sizing: border-box;
+	color: #222;
+}
+
+.meshmap-coverage-panel.meshmap-coverage-panel-open {
+	display: block;
+}
+
+.meshmap-coverage-header {
+	font-weight: bold;
+	font-size: 14px;
+	margin-bottom: 6px;
+}
+
+.meshmap-coverage-show-row {
+	display: flex;
+	align-items: flex-end;
+	gap: 10px;
+}
+
+.meshmap-coverage-show-main {
+	flex: 0 1 auto;
+	min-width: 0;
+}
+
+.meshmap-coverage-mode {
+	box-sizing: border-box;
+	width: auto;
+	min-width: 7.5em;
+	max-width: 10em;
+	padding: 5px 7px;
+	border: 1px solid #bbb;
+	border-radius: 3px;
+	font-size: 13px;
+	background: #fff;
+}
+
+.meshmap-coverage-hide-unknown {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	flex: none;
+	margin: 0 0 2px;
+	font-size: 12px;
+	font-weight: normal;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.meshmap-coverage-node-icon {
+	background: transparent !important;
+	border: none !important;
+}
+
+.meshmap-coverage-node-dot {
+	display: block;
+	width: 14px;
+	height: 14px;
+	margin: 1px;
+	border-radius: 50%;
+	border: 2px solid #333;
+	box-sizing: border-box;
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.7);
+}
+
+.meshmap-coverage-section {
+	margin-bottom: 8px;
+}
+
+.meshmap-coverage-label {
+	font-weight: 600;
+	margin-bottom: 4px;
+}
+
+.meshmap-coverage-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-bottom: 4px;
+}
+
+.meshmap-coverage-chips:empty {
+	display: none;
+}
+
+.meshmap-coverage-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 6px 2px 4px;
+	background: #fff8dc;
+	border: 1px solid #d4b000;
+	border-radius: 12px;
+	font-size: 12px;
+	max-width: 100%;
+}
+
+.meshmap-coverage-chip-color {
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: 1px solid #999;
+	border-radius: 3px;
+	background: transparent;
+	cursor: pointer;
+	flex: none;
+}
+
+.meshmap-coverage-chip-color::-webkit-color-swatch-wrapper {
+	padding: 1px;
+}
+
+.meshmap-coverage-chip-color::-webkit-color-swatch {
+	border: none;
+	border-radius: 2px;
+}
+
+.meshmap-coverage-chip-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 12em;
+}
+
+.meshmap-coverage-chip-remove {
+	border: none;
+	background: transparent;
+	color: #666;
+	cursor: pointer;
+	font-size: 14px;
+	line-height: 1;
+	padding: 0 2px;
+	flex: none;
+}
+
+.meshmap-coverage-chip-remove:hover {
+	color: #b00020;
+}
+
+.meshmap-coverage-chip-disabled {
+	background: #eee;
+	border-color: #bbb;
+	color: #888;
+	opacity: 0.75;
+}
+
+.meshmap-coverage-chip-disabled .meshmap-coverage-chip-label {
+	text-decoration: line-through;
+}
+
+.meshmap-coverage-name-input {
+	box-sizing: border-box;
+	width: 100%;
+	padding: 5px 7px;
+	border: 1px solid #bbb;
+	border-radius: 3px;
+	font-size: 13px;
+}
+
+.meshmap-coverage-suggest {
+	list-style: none;
+	margin: 2px 0 0;
+	padding: 0;
+	max-height: 160px;
+	overflow-y: auto;
+	border: 1px solid #ddd;
+	border-radius: 3px;
+	display: none;
+}
+
+.meshmap-coverage-suggest.meshmap-coverage-suggest-open {
+	display: block;
+}
+
+.meshmap-coverage-suggest-item {
+	padding: 5px 8px;
+	cursor: pointer;
+	border-top: 1px solid #eee;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.meshmap-coverage-suggest-item:first-child {
+	border-top: none;
+}
+
+.meshmap-coverage-suggest-item:hover,
+.meshmap-coverage-suggest-active {
+	background: #eef4ff;
+}
+
+.meshmap-coverage-checks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 10px;
+}
+
+.meshmap-coverage-channels {
+	flex-direction: column;
+	flex-wrap: nowrap;
+	max-height: 160px;
+	overflow-y: auto;
+	border: 1px solid #eee;
+	border-radius: 3px;
+	padding: 4px 6px;
+	gap: 2px;
+}
+
+.meshmap-coverage-channel-group {
+	font-weight: 600;
+	font-size: 12px;
+	color: #555;
+	margin-top: 4px;
+}
+
+.meshmap-coverage-channel-group:first-child {
+	margin-top: 0;
+}
+
+.meshmap-coverage-check {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	cursor: pointer;
+	font-weight: normal;
+	white-space: nowrap;
+}
+
+.meshmap-coverage-empty {
+	color: #888;
+	font-style: italic;
+}
+
+.meshmap-coverage-range-controls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.meshmap-coverage-range {
+	flex: 1;
+	min-width: 0;
+}
+
+.meshmap-coverage-range-num {
+	width: 4.5em;
+	padding: 4px 6px;
+	border: 1px solid #bbb;
+	border-radius: 3px;
+	font-size: 13px;
+}
+
+.meshmap-coverage-actions {
+	margin: 4px 0 8px;
+}
+
+.meshmap-coverage-clear {
+	padding: 4px 10px;
+	border: 1px solid #bbb;
+	border-radius: 3px;
+	background: #f5f5f5;
+	cursor: pointer;
+	font-size: 12px;
+}
+
+.meshmap-coverage-clear:hover {
+	background: #eee;
+}
+
+.meshmap-coverage-status {
+	font-size: 12px;
+	color: #444;
+	margin-bottom: 6px;
+}
+
+.meshmap-coverage-legend {
+	display: flex;
+	flex-direction: row;
+	flex-wrap: nowrap;
+	align-items: center;
+	gap: 12px;
+	font-size: 11px;
+	color: #555;
+	border-top: 1px solid #eee;
+	padding-top: 6px;
+	white-space: nowrap;
+}
+
+.meshmap-coverage-legend.meshmap-coverage-legend-hidden {
+	display: none;
+}
+
+.meshmap-coverage-legend-known::before,
+.meshmap-coverage-legend-unknown::before {
+	content: '';
+	display: inline-block;
+	width: 14px;
+	height: 10px;
+	margin-right: 6px;
+	vertical-align: -1px;
+	border-radius: 2px;
+}
+
+.meshmap-coverage-legend-known::before {
+	background: rgba(255, 215, 0, 0.3);
+	border: 1px solid #d4b000;
+}
+
+.meshmap-coverage-legend-unknown::before {
+	background: rgba(187, 187, 187, 0.3);
+	border: 1.5px dotted #bbb;
+}
+
+html[data-theme="dark"] .meshmap-coverage,
+html[data-theme="dark"] .meshmap-coverage-panel {
+	background: #2b2b2b;
+	color: #e6e6e6;
+	border-color: rgba(255, 255, 255, 0.2);
+}
+
+html[data-theme="dark"] .leaflet-bar a.meshmap-coverage-button {
+	background: #2b2b2b;
+	color: #e6e6e6;
+}
+
+html[data-theme="dark"] .meshmap-coverage-expanded a.meshmap-coverage-button {
+	color: #ffd76a;
+}
+
+html[data-theme="dark"] .meshmap-coverage-name-input,
+html[data-theme="dark"] .meshmap-coverage-range-num,
+html[data-theme="dark"] .meshmap-coverage-mode,
+html[data-theme="dark"] .meshmap-coverage-clear {
+	background: #1e1e1e;
+	border-color: #555;
+	color: #e6e6e6;
+}
+
+html[data-theme="dark"] .meshmap-coverage-chip {
+	background: #3a3420;
+	border-color: #b8860b;
+	color: #f0e6c0;
+}
+
+html[data-theme="dark"] .meshmap-coverage-chip-disabled {
+	background: #333;
+	border-color: #555;
+	color: #999;
+}
+
+html[data-theme="dark"] .meshmap-coverage-hide-unknown {
+	color: #ccc;
+}
+
+html[data-theme="dark"] .meshmap-coverage-suggest {
+	border-color: #444;
+	background: #1e1e1e;
+}
+
+html[data-theme="dark"] .meshmap-coverage-suggest-item {
+	border-color: #444;
+}
+
+html[data-theme="dark"] .meshmap-coverage-suggest-item:hover,
+html[data-theme="dark"] .meshmap-coverage-suggest-active {
+	background: #3a4558;
+}
+
+html[data-theme="dark"] .meshmap-coverage-channels {
+	border-color: #444;
+}
+
+html[data-theme="dark"] .meshmap-coverage-channel-group,
+html[data-theme="dark"] .meshmap-coverage-status,
+html[data-theme="dark"] .meshmap-coverage-legend,
+html[data-theme="dark"] .meshmap-coverage-empty {
+	color: #bbb;
+}
+
+html[data-theme="dark"] .meshmap-coverage-legend,
+html[data-theme="dark"] .meshmap-coverage-actions {
+	border-color: #444;
+}
+
+@media (pointer: coarse), (max-width: 700px) {
+	.meshmap-coverage-panel.meshmap-coverage-panel-open {
+		z-index: 10000;
+		top: calc(env(safe-area-inset-top, 0px) + 8px);
+		left: calc(env(safe-area-inset-left, 0px) + 8px);
+		right: calc(env(safe-area-inset-right, 0px) + 8px);
+		width: auto;
+		max-height: min(75vh, 640px);
+		position: fixed;
+	}
+
+	.meshmap-coverage,
+	.leaflet-bar a.meshmap-coverage-button {
+		min-width: 44px !important;
+		min-height: 44px !important;
+		width: 44px !important;
+		height: 44px !important;
+	}
+
+	.meshmap-coverage-name-input,
+	.meshmap-coverage-range-num {
+		font-size: 16px !important;
+	}
+
+	.meshmap-coverage-check {
+		padding: 4px 0;
+	}
+}
