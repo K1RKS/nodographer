@@ -1,9 +1,9 @@
 /**
  * Meshmap (== Nodographer frontend) radio primary coverage overlay.
  *
- * Show modes: Off (default), Band, Node, Bandwidth. Draws cones/circles from
- * antenna pattern when known (Node mode always draws as omni if unknown),
- * colors by the selected mode, and places matching colored node icons.
+ * Show modes: Off (default) or Node. Draws cones/circles from antenna pattern
+ * when known (Node mode always draws as omni if unknown), colors per node,
+ * and places matching colored node icons.
  *
  * Fill radius uses LQM-applied distance (lqmDistanceM) when > 0.5 mi, capped by
  * the panel max range; stroke-only continues out to the panel max when larger.
@@ -30,7 +30,7 @@
     '10': '#984ea3',
     '20': '#ff7f00'
   };
-  var MODES = ['off', 'band', 'node', 'bandwidth'];
+  var MODES = ['off', 'node'];
   var LAYER_NAME = 'Radio Coverage';
   var SESSION_KEY = 'coverage';
   var DEFAULT_RANGE = 20;
@@ -375,9 +375,7 @@
       var custom = getCustomColor(node.node);
       if (custom) return custom;
     }
-    if (state.mode === 'node') return colorForNode(node.node);
-    if (state.mode === 'bandwidth') return colorForBandwidth(node.chanbw);
-    return colorForBand(node._bandKey);
+    return colorForNode(node.node);
   }
 
   function collectRfNodes(allDevices) {
@@ -473,6 +471,8 @@
   }
 
   function normalizeMode(mode) {
+    // Retired Band/Bandwidth show modes map to Node
+    if (mode === 'band' || mode === 'bandwidth') return 'node';
     return MODES.indexOf(mode) !== -1 ? mode : DEFAULT_MODE;
   }
 
@@ -789,12 +789,7 @@
     return String(title).replace(/\s*\(unpolled\)\s*$/i, '').toLowerCase();
   }
 
-  // When panel filters are set, hide non-matching station markers (works
-  // with Coverage Off = classic map, and alongside coverage when On).
-  function applyStationMarkerFilter() {
-    if (typeof oms === 'undefined' || !oms || typeof oms.getMarkers !== 'function') {
-      return;
-    }
+  function buildFilterMatchKeys() {
     var filtering = hasActiveFilters();
     var matchKeys = {};
     var rfKeys = {};
@@ -803,12 +798,22 @@
       rfKeys[key] = true;
       if (filtering && nodeMatches(node)) matchKeys[key] = true;
     });
+    return { filtering: filtering, matchKeys: matchKeys, rfKeys: rfKeys };
+  }
+
+  // When panel filters are set, hide non-matching station markers (works
+  // with Coverage Off = classic map, and alongside coverage when On).
+  function applyStationMarkerFilter(info) {
+    if (typeof oms === 'undefined' || !oms || typeof oms.getMarkers !== 'function') {
+      return;
+    }
+    info = info || buildFilterMatchKeys();
     oms.getMarkers().forEach(function (marker) {
       var key = markerTitleKey(marker);
       if (!key) return;
       var show = true;
-      if (filtering) {
-        show = rfKeys[key] ? !!matchKeys[key] : false;
+      if (info.filtering) {
+        show = info.rfKeys[key] ? !!info.matchKeys[key] : false;
       }
       marker.setOpacity(show ? 1 : 0);
       if (marker.options) marker.options.interactive = show;
@@ -816,6 +821,46 @@
         marker._icon.style.pointerEvents = show ? '' : 'none';
       }
     });
+  }
+
+  function allLinkLayers() {
+    return [
+      window.twoLinksTX, window.twoLinksThp, window.twoLinksSnR, window.twoLinksCost, window.twoLinksQual,
+      window.threeLinksTX, window.threeLinksThp, window.threeLinksSnR, window.threeLinksCost, window.threeLinksQual,
+      window.fiveLinksTX, window.fiveLinksThp, window.fiveLinksSnR, window.fiveLinksCost, window.fiveLinksQual,
+      window.nineLinksTX, window.nineLinksThp, window.nineLinksSnR, window.nineLinksCost, window.nineLinksQual,
+      window.noRFLinks, window.superNodeLinks
+    ].filter(Boolean);
+  }
+
+  // Links follow the same filter: both endpoints must be visible nodes.
+  function applyLinkFilter(info) {
+    info = info || buildFilterMatchKeys();
+    allLinkLayers().forEach(function (layer) {
+      if (!layer || typeof layer.eachLayer !== 'function') return;
+      layer.eachLayer(function (line) {
+        if (!line || !line.options || typeof line.setStyle !== 'function') return;
+        var from = line.options.meshmapFrom;
+        var to = line.options.meshmapTo;
+        if (!from && !to) return;
+        var show = !info.filtering
+          || (!!info.matchKeys[from] && !!info.matchKeys[to]);
+        if (line.options.meshmapBaseOpacity === undefined) {
+          line.options.meshmapBaseOpacity =
+            line.options.opacity != null ? line.options.opacity : 0.8;
+        }
+        line.setStyle({
+          opacity: show ? line.options.meshmapBaseOpacity : 0,
+          interactive: show
+        });
+      });
+    });
+  }
+
+  function applyMapFilters() {
+    var info = buildFilterMatchKeys();
+    applyStationMarkerFilter(info);
+    applyLinkFilter(info);
   }
 
   function redraw() {
@@ -845,7 +890,7 @@
       ensureClassicStationLayers();
     }
 
-    applyStationMarkerFilter();
+    applyMapFilters();
 
     if (control) {
       if (typeof control.updateStatus === 'function') control.updateStatus(counts);
@@ -925,9 +970,7 @@
         '<div class="meshmap-coverage-label">Show coverage</div>' +
         '<select class="meshmap-coverage-mode" aria-label="Show coverage mode">' +
         '<option value="off">Off</option>' +
-        '<option value="band">Band</option>' +
         '<option value="node">Node</option>' +
-        '<option value="bandwidth">Bandwidth</option>' +
         '</select>' +
         '</div>' +
         '<label class="meshmap-coverage-hide-unknown" title="If Antenna beam width or direction is unknown, hide it instead of assuming Omni">' +
@@ -1209,9 +1252,8 @@
 
     updateLegend: function () {
       if (!this._legend) return;
-      var show = state.mode === 'band' || state.mode === 'bandwidth';
-      if (show) L.DomUtil.removeClass(this._legend, 'meshmap-coverage-legend-hidden');
-      else L.DomUtil.addClass(this._legend, 'meshmap-coverage-legend-hidden');
+      // Band/Bandwidth show modes (and their legend) were removed
+      L.DomUtil.addClass(this._legend, 'meshmap-coverage-legend-hidden');
     },
 
     updateStatus: function (counts) {
@@ -1491,7 +1533,6 @@
       this._renderChips();
       if (state.mode === 'off') setMode('node');
       else redraw();
-      this.openPropsDialog(hit.name);
     },
 
     _onNameKey: function (ev) {
@@ -1539,7 +1580,7 @@
     map.on('overlayadd', function (e) {
       if (syncingLayer) return;
       if (e && e.name === LAYER_NAME && state.mode === 'off') {
-        setMode('band');
+        setMode('node');
       }
     });
     map.on('overlayremove', function (e) {
