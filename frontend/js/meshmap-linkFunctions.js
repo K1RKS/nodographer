@@ -90,6 +90,14 @@ function meshmapNodeKey(name) {
 		}
 		return o;
 	}
+	function rfPopupHtml(peerHostname, metricText, distanceText, linkInfo) {
+		var snrLink = '';
+		if (typeof MeshmapSnrCalculator !== 'undefined' && MeshmapSnrCalculator.linkHtmlForSourceAndPeer) {
+			snrLink = MeshmapSnrCalculator.linkHtmlForSourceAndPeer(node, peerHostname, linkInfo);
+		}
+		return "<div class='linkPopupContent'><strong><a href='http://" + peerHostname.toLowerCase() + ".local.mesh' target='_blank'>" + peerHostname.toLowerCase() + "</a></strong> to <strong><a href='http://" + node.toLowerCase() + ".local.mesh' target='_blank'>" + node.toLowerCase() +
+			"</a></strong> " + metricText + distanceText + snrLink + "</div>";
+	}
 	for(var i = 0; i < objArray.length; i++) {
 		if(objArray[i][1].linkType === "RF") {
 			if(typeof objArray[i][1].linkLat === 'undefined' ||
@@ -106,14 +114,14 @@ function meshmapNodeKey(name) {
 					distance = " Distance " + objArray[i][1].distanceMiles + "mi (" + objArray[i][1].distanceKM + "km)";
 				}
 				var peerHost = objArray[i][1].hostname;
+				var linkInfo = objArray[i][1];
 
 				if(linkMetric === "txRate") {
 					linkColor = (linkColorsRF_txRate(parseFloat(objArray[i][1].tx_rate, linkMetric)));
 
 					L.polyline([[parseFloat(nodeLat), parseFloat(nodeLon)],[parseFloat(objArray[i][1].linkLat), parseFloat(objArray[i][1].linkLon)]],
 						linkOpts(linkColor, 0.8, 2, peerHost)).bindPopup(
-						"<div class='linkPopupContent'><strong><a href='http://" + objArray[i][1].hostname.toLowerCase() + ".local.mesh' target='_blank'>" + objArray[i][1].hostname.toLowerCase() + "</a></strong> to <strong><a href='http://" + node.toLowerCase() + ".local.mesh' target='_blank'>" + node.toLowerCase() +
-						"</a></strong> TX rate: " + objArray[i][1].tx_rate + distance +"</div>").addTo(layer);
+						rfPopupHtml(peerHost, "TX rate: " + objArray[i][1].tx_rate, distance, linkInfo)).addTo(layer);
 
 				}
 				if(linkMetric === "Tput") {
@@ -121,8 +129,7 @@ function meshmapNodeKey(name) {
 
 					L.polyline([[parseFloat(nodeLat), parseFloat(nodeLon)],[parseFloat(objArray[i][1].linkLat), parseFloat(objArray[i][1].linkLon)]],
 						linkOpts(linkColor, 0.8, 2, peerHost)).bindPopup(
-						"<div class='linkPopupContent'><strong><a href='http://" + objArray[i][1].hostname.toLowerCase() + ".local.mesh' target='_blank'>" + objArray[i][1].hostname.toLowerCase() + "</a></strong> to <strong><a href='http://" + node.toLowerCase() + ".local.mesh' target='_blank'>" + node.toLowerCase() +
-						"</a></strong> Expected Throughput: " + objArray[i][1].expected_throughput + distance +"</div>").addTo(layer);
+						rfPopupHtml(peerHost, "Expected Throughput: " + objArray[i][1].expected_throughput, distance, linkInfo)).addTo(layer);
 
 				}
 				if(linkMetric === "SnR") {
@@ -132,23 +139,20 @@ function meshmapNodeKey(name) {
 					SnR = SnR * -1;
 					L.polyline([[parseFloat(nodeLat), parseFloat(nodeLon)],[parseFloat(objArray[i][1].linkLat), parseFloat(objArray[i][1].linkLon)]],
 						linkOpts(linkColor, 0.8, 2, peerHost)).bindPopup(
-						"<div class='linkPopupContent'><strong><a href='http://" + objArray[i][1].hostname.toLowerCase() + ".local.mesh' target='_blank'>" + objArray[i][1].hostname.toLowerCase() + "</a></strong> to <strong><a href='http://" + node.toLowerCase() + ".local.mesh' target='_blank'>" + node.toLowerCase() +
-						"</a></strong> SnR:" + SnR + " sig: " + objArray[i][1].signal + " noise: " + objArray[i][1].noise + distance + "</div>").addTo(layer);
+						rfPopupHtml(peerHost, "SnR:" + SnR + " sig: " + objArray[i][1].signal + " noise: " + objArray[i][1].noise, distance, linkInfo)).addTo(layer);
 				}
 				if(linkMetric === "cost") {
 					linkColor = (linkColorRF_cost(objArray[i][1].linkCost));
 					L.polyline([[parseFloat(nodeLat), parseFloat(nodeLon)],[parseFloat(objArray[i][1].linkLat), parseFloat(objArray[i][1].linkLon)]],
                                                 linkOpts(linkColor, 0.8, 2, peerHost)).bindPopup(
-                                                "<div class='linkPopupContent'><strong><a href='http://" + objArray[i][1].hostname.toLowerCase() + ".local.mesh' target='_blank'>" + objArray[i][1].hostname.toLowerCase() + "</a></strong> to <strong><a href='http://" + node.toLowerCase() + ".local.mesh' target='_blank'>" + node.toLowerCase() +
-                                                "</a></strong> Link Cost: " + objArray[i][1].linkCost + distance + "</div>").addTo(layer);
+                                                rfPopupHtml(peerHost, "Link Cost: " + objArray[i][1].linkCost, distance, linkInfo)).addTo(layer);
 				}
 
 				if(linkMetric === "qual") {
 					linkColor = (linkColorRF_quality(objArray[i][1].linkQuality));
 					L.polyline([[parseFloat(nodeLat), parseFloat(nodeLon)],[parseFloat(objArray[i][1].linkLat), parseFloat(objArray[i][1].linkLon)]],
                                                 linkOpts(linkColor, 0.8, 2, peerHost)).bindPopup(
-                                                "<div class='linkPopupContent'><strong><a href='http://" + objArray[i][1].hostname.toLowerCase() + ".local.mesh' target='_blank'>" + objArray[i][1].hostname.toLowerCase() + "</a></strong> to <strong><a href='http://" + node.toLowerCase() + ".local.mesh' target='_blank'>" + node.toLowerCase() +
-                                                "</a></strong> Link Quality: " + objArray[i][1].linkQuality + distance + "</div>").addTo(layer);
+                                                rfPopupHtml(peerHost, "Link Quality: " + objArray[i][1].linkQuality, distance, linkInfo)).addTo(layer);
 				}
 
 /*

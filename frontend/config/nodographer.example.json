@@ -3,6 +3,9 @@
   "meshinfo": {
     "baseUrl": "meshinfo/current/"
   },
+  "tools": {
+    "snrCalculatorUrl": ""
+  },
   "map": {
     "title": "Nodographer Mesh Map",
     "centerLat": 43.970,

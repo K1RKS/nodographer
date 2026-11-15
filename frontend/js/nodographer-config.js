@@ -4,6 +4,7 @@
  * Reads config/nodographer.json (optional) relative to the frontend root:
  * {
  *   "meshinfo": { "baseUrl": "meshinfo/current/" },
+ *   "tools": { "snrCalculatorUrl": "https://host/SNR_Calculator/" },
  *   "map": { "title": ..., "centerLat": ..., "tileServers": {...}, ... }
  * }
  *
@@ -71,11 +72,17 @@ var NodographerConfig = (function () {
     return (m && typeof m === 'object') ? m : {};
   }
 
+  function tools() {
+    var t = state.config.tools;
+    return (t && typeof t === 'object') ? t : {};
+  }
+
   return {
     load: load,
     dataUrl: dataUrl,
     frontendUrl: frontendUrl,
     map: map,
+    tools: tools,
     get config() { return state.config; },
   };
 })();

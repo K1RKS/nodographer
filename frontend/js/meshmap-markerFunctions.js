@@ -64,7 +64,7 @@ function createNodePopup(device, options) {
 		"<br>Load Avg: 1min " + device.loadavg[0] + ", 5min " + device.loadavg[1] + ", 15min " + device.loadavg[2] +
 		hopsLine + "</div></div>" +
 		"<div class='popupTab' id='popupTab-Services'><div class='popupTabContent'><br>" + createServiceList(device.services) + "</div></div>" +
-		"<div class='popupTab' id='popupTab-Links'><div class='popupTabContent'><br>" + createLinkList(device.link_info) + "</div></div>" +
+		"<div class='popupTab' id='popupTab-Links'><div class='popupTabContent'><br>" + createLinkList(device) + "</div></div>" +
 		"<div class='popupTab' id='popupTab-Info'><div class='popupTabContent'><br><a href='http://" + device.node + ".local.mesh/cgi-bin/metrics' target='_blank'>Prometheus Metrics</a><br>" +
 		"<a href='" + getSysinfoUrl(device.node, device.protocol, '') + "' target='_blank'>System Information</a><br>" +
 		"<a href='" + getSysinfoUrl(device.node, device.protocol, '?hosts=1') + "' target='_blank'>Hosts</a><br>" +
@@ -208,11 +208,17 @@ function createServiceList(list) {
 	return serviceList;
 }
 
-function createLinkList(list) {
-	var def = "Links go here.";
+function createLinkList(deviceOrList) {
+	var device = null;
+	var list = deviceOrList;
+	if (deviceOrList && typeof deviceOrList === 'object' && deviceOrList.link_info) {
+		device = deviceOrList;
+		list = deviceOrList.link_info;
+	}
 	var linkList = "";
-	if(list.length === 0) {
+	if(!list || Object.keys(list).length === 0) {
 		linkList = "No Links?";
+		return linkList;
 	}
 	var objArray = Object.entries(list);  //z becomes an array like 0[0: IP, 1: all the link info], 1[0: IP, 1: all the link info], etc...etc...
 	for(var i = 0; i < objArray.length; i++) {
@@ -223,8 +229,16 @@ function createLinkList(list) {
 			}else {
 				distance = " Distance " + objArray[i][1].distanceMiles + "mi (" + objArray[i][1].distanceKM + "km)";
 			}
+			var snrLink = '';
+			if (device && typeof MeshmapSnrCalculator !== 'undefined' && MeshmapSnrCalculator.linkHtmlForSourceAndPeer) {
+				snrLink = MeshmapSnrCalculator.linkHtmlForSourceAndPeer(
+					device,
+					objArray[i][1].hostname,
+					objArray[i][1]
+				);
+			}
 			linkList += "<strong>" + objArray[i][1].hostname + "</strong>" +
-				"<br> Type: " + objArray[i][1].linkType + distance + "<br>";
+				"<br> Type: " + objArray[i][1].linkType + distance + snrLink + "<br>";
 		}else {
 			linkList += "<strong>" + objArray[i][1].hostname + "</strong>" +
                                 "<br> Type: " + objArray[i][1].linkType + "<br>";
@@ -250,6 +264,9 @@ function meshmapBindPopupOptions() {
 }
 
 function createDeviceMarkers(allDevices) {
+	if (typeof MeshmapSnrCalculator !== 'undefined' && MeshmapSnrCalculator.indexDevices) {
+		MeshmapSnrCalculator.indexDevices(allDevices);
+	}
 	for(var i = 0; i < allDevices['900'].length; i++) {
 		var band = "900";
 		var popup = createNodePopup(allDevices[band][i]);
