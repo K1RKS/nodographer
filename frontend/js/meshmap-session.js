@@ -107,11 +107,25 @@
       return null;
     }
 
+    function listVisibleOverlayNames() {
+      var list = [];
+      if (!overlayNameByLayer) return list;
+      overlayNameByLayer.forEach(function (n, layer) {
+        if (map.hasLayer(layer)) list.push(n);
+      });
+      return list;
+    }
+
     map.on('overlayadd', function (e) {
       var name = overlayKey(e);
       if (!name) return;
       var s = readSession() || {};
-      var list = Array.isArray(s.overlays) ? s.overlays.slice() : [];
+      // First overlay event: seed from layers already on the map (defaults
+      // from map init never fire overlayadd, so without this the session
+      // would only remember toggled layers like Radio Coverage).
+      var list = Array.isArray(s.overlays)
+        ? s.overlays.slice()
+        : listVisibleOverlayNames();
       if (list.indexOf(name) === -1) list.push(name);
       writeSession({ overlays: list });
     });
@@ -120,11 +134,14 @@
       var name = overlayKey(e);
       if (!name) return;
       var s = readSession() || {};
-      var list = Array.isArray(s.overlays)
-        ? s.overlays.filter(function (n) {
-            return n !== name;
-          })
-        : [];
+      var list;
+      if (!Array.isArray(s.overlays)) {
+        list = listVisibleOverlayNames();
+      } else {
+        list = s.overlays.filter(function (n) {
+          return n !== name;
+        });
+      }
       writeSession({ overlays: list });
     });
   }
@@ -137,6 +154,24 @@
     s.overlays.forEach(function (n) {
       wanted[n] = true;
     });
+
+    // Older sessions could list only toggled overlays (e.g. Radio Coverage)
+    // because map-init defaults never fired overlayadd. If no Station overlay
+    // is in the saved list, keep whatever station layers are already on.
+    var stationNames = [];
+    var stationWanted = false;
+    Object.keys(overlayLayers).forEach(function (name) {
+      var plain = String(name).replace(/<[^>]*>/g, '');
+      if (/2\.4GHz|3\.4GHz|5\.8GHz|900MHz|No RF|SuperNode/i.test(plain)) {
+        stationNames.push(name);
+        if (wanted[name]) stationWanted = true;
+      }
+    });
+    if (!stationWanted) {
+      stationNames.forEach(function (name) {
+        if (map.hasLayer(overlayLayers[name])) wanted[name] = true;
+      });
+    }
 
     Object.keys(overlayLayers).forEach(function (name) {
       var layer = overlayLayers[name];

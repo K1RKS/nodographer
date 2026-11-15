@@ -67,12 +67,17 @@
   var bandOptions = [];
   var channelOptions = [];
   var nodeNames = [];
+  var OVERRIDE_KEYS = [
+    'antDesc', 'antGain', 'antBeam', 'antAzimuth', 'antElevation', 'antHeight', 'lqmDistanceM'
+  ];
+
   var state = {
     mode: DEFAULT_MODE,
     hideUnknown: false,
     names: [],
     colors: {},
     noFill: {},
+    overrides: {},
     bandwidths: [],
     bands: [],
     channels: [],
@@ -100,8 +105,11 @@
   }
 
   function hasKnownAntenna(node) {
+    node = effectiveNode(node);
     var desc = node.antDesc;
     var beam = num(node.antBeam);
+    // Manual override can supply beam without a description
+    if (beam !== null && beam > 0 && getOverride(node.node)) return true;
     return !!(desc && desc !== 'Not Available' && beam !== null && beam > 0);
   }
 
@@ -114,6 +122,63 @@
 
   function rangeUnitLabel() {
     return mapInfo && mapInfo.kilometers ? 'km' : 'mi';
+  }
+
+  function metersToPanel(m) {
+    var v = num(m);
+    if (v === null) return null;
+    if (mapInfo && mapInfo.kilometers) return Math.round(v / 100) / 10;
+    return Math.round((v / 1609.344) * 10) / 10;
+  }
+
+  function panelToMeters(v) {
+    var n = num(v);
+    if (n === null || n < 0) return null;
+    if (mapInfo && mapInfo.kilometers) return Math.round(n * 1000 * 10) / 10;
+    return Math.round(n * 1609.344 * 10) / 10;
+  }
+
+  function getOverride(name) {
+    return (state.overrides && state.overrides[colorKey(name)]) || null;
+  }
+
+  function clearOverride(name) {
+    if (!state.overrides) return;
+    delete state.overrides[colorKey(name)];
+  }
+
+  function setOverride(name, props) {
+    if (!state.overrides) state.overrides = {};
+    state.overrides[colorKey(name)] = props;
+  }
+
+  /** Merge session overrides onto polled node fields for drawing/classify. */
+  function effectiveNode(node) {
+    if (!node) return node;
+    var o = getOverride(node.node);
+    if (!o) return node;
+    var out = {};
+    Object.keys(node).forEach(function (k) { out[k] = node[k]; });
+    OVERRIDE_KEYS.forEach(function (k) {
+      if (Object.prototype.hasOwnProperty.call(o, k)) out[k] = o[k];
+    });
+    return out;
+  }
+
+  function polledProps(node) {
+    return {
+      antDesc: node.antDesc || '',
+      antGain: num(node.antGain),
+      antBeam: num(node.antBeam),
+      antAzimuth: num(node.antAzimuth),
+      antElevation: num(node.antElevation),
+      antHeight: num(node.antHeight),
+      lqmDistanceM: num(node.lqmDistanceM)
+    };
+  }
+
+  function formatPropNum(v) {
+    return v === null || v === undefined ? '' : String(v);
   }
 
   function destinationPoint(lat, lon, bearingDeg, distanceM) {
@@ -290,6 +355,7 @@
     var key = colorKey(name);
     if (state.colors) delete state.colors[key];
     if (state.noFill) delete state.noFill[key];
+    clearOverride(name);
   }
 
   function nodeNoFill(name) {
@@ -417,6 +483,7 @@
       names: [],
       colors: {},
       noFill: {},
+      overrides: {},
       bandwidths: [],
       bands: [],
       channels: [],
@@ -440,6 +507,22 @@
         if (c.noFill[k]) state.noFill[colorKey(k)] = true;
       });
     }
+    if (c.overrides && typeof c.overrides === 'object') {
+      Object.keys(c.overrides).forEach(function (k) {
+        var src = c.overrides[k];
+        if (!src || typeof src !== 'object') return;
+        var dst = {};
+        OVERRIDE_KEYS.forEach(function (field) {
+          if (!Object.prototype.hasOwnProperty.call(src, field)) return;
+          if (field === 'antDesc') {
+            dst[field] = src[field] == null ? '' : String(src[field]);
+          } else {
+            dst[field] = num(src[field]);
+          }
+        });
+        state.overrides[colorKey(k)] = dst;
+      });
+    }
     if (Array.isArray(c.bandwidths)) state.bandwidths = c.bandwidths.slice();
     if (Array.isArray(c.bands)) state.bands = c.bands.slice();
     if (Array.isArray(c.channels)) state.channels = c.channels.slice();
@@ -459,6 +542,20 @@
     return out;
   }
 
+  function copyOverrides(src) {
+    var out = {};
+    Object.keys(src || {}).forEach(function (k) {
+      var o = src[k];
+      if (!o || typeof o !== 'object') return;
+      var dst = {};
+      OVERRIDE_KEYS.forEach(function (field) {
+        if (Object.prototype.hasOwnProperty.call(o, field)) dst[field] = o[field];
+      });
+      out[k] = dst;
+    });
+    return out;
+  }
+
   function saveState() {
     if (!window.MeshmapSession) return;
     var patch = {};
@@ -473,6 +570,7 @@
         return out;
       })(),
       noFill: copyBoolMap(state.noFill),
+      overrides: copyOverrides(state.overrides),
       bandwidths: state.bandwidths.slice(),
       bands: state.bands.slice(),
       channels: state.channels.slice(),
@@ -506,6 +604,7 @@
   }
 
   function classify(node) {
+    node = effectiveNode(node);
     if (!hasKnownAntenna(node)) return 'unknown';
     var beam = num(node.antBeam);
     if (beam >= 360) return 'omni';
@@ -524,7 +623,7 @@
 
   /** Unknown pattern is skipped when Hide Unknown is on. */
   function isCoverageHidden(node) {
-    return !!(state.hideUnknown && classify(node) === 'unknown');
+    return !!(state.hideUnknown && classify(effectiveNode(node)) === 'unknown');
   }
 
   function isNameChipDisabled(name) {
@@ -577,12 +676,14 @@
 
   /** LQM-applied distance in meters when it looks like a real RF reach. */
   function realLqmMeters(node) {
+    node = effectiveNode(node);
     var m = num(node.lqmDistanceM);
     if (m === null || m <= LQM_MIN_REAL_M) return null;
     return m;
   }
 
   function geometryAtRadius(node, meters, style, useUnknownGrey) {
+    node = effectiveNode(node);
     if (useUnknownGrey) {
       return L.circle([node.lat, node.lon], circleOptions(style, meters));
     }
@@ -602,6 +703,7 @@
    * Per-node "No fill" uses outline only (color still on stroke + node icon).
    */
   function addCoverageShapes(node, panelMeters, color) {
+    node = effectiveNode(node);
     var kind = classify(node);
     var useUnknownGrey = kind === 'unknown' && state.mode !== 'node';
     var lqmM = realLqmMeters(node);
@@ -627,6 +729,7 @@
   }
 
   function makeMarker(node, color) {
+    node = effectiveNode(node);
     var iconColor = (classify(node) === 'unknown' && state.mode !== 'node')
       ? '#bbbbbb'
       : color;
@@ -652,6 +755,69 @@
     return marker;
   }
 
+  function hasActiveFilters() {
+    return state.names.length > 0
+      || state.bandwidths.length > 0
+      || state.bands.length > 0
+      || state.channels.length > 0;
+  }
+
+  function classicStationLayers() {
+    return [
+      window.band2,
+      window.band3,
+      window.band5,
+      window.band900,
+      window.noRF,
+      window.superNodes
+    ].filter(Boolean);
+  }
+
+  // Coverage Off = classic meshmap: station band layers carry the icons.
+  // Session restore can leave only "Radio Coverage" on (init layers never
+  // seeded the overlay list), so turning coverage off would show nothing.
+  function ensureClassicStationLayers() {
+    if (!map) return;
+    classicStationLayers().forEach(function (layer) {
+      if (!map.hasLayer(layer)) map.addLayer(layer);
+    });
+  }
+
+  function markerTitleKey(marker) {
+    var title = marker && marker.options && marker.options.title;
+    if (!title) return null;
+    return String(title).replace(/\s*\(unpolled\)\s*$/i, '').toLowerCase();
+  }
+
+  // When panel filters are set, hide non-matching station markers (works
+  // with Coverage Off = classic map, and alongside coverage when On).
+  function applyStationMarkerFilter() {
+    if (typeof oms === 'undefined' || !oms || typeof oms.getMarkers !== 'function') {
+      return;
+    }
+    var filtering = hasActiveFilters();
+    var matchKeys = {};
+    var rfKeys = {};
+    rfNodes.forEach(function (node) {
+      var key = String(node.node).toLowerCase();
+      rfKeys[key] = true;
+      if (filtering && nodeMatches(node)) matchKeys[key] = true;
+    });
+    oms.getMarkers().forEach(function (marker) {
+      var key = markerTitleKey(marker);
+      if (!key) return;
+      var show = true;
+      if (filtering) {
+        show = rfKeys[key] ? !!matchKeys[key] : false;
+      }
+      marker.setOpacity(show ? 1 : 0);
+      if (marker.options) marker.options.interactive = show;
+      if (marker._icon) {
+        marker._icon.style.pointerEvents = show ? '' : 'none';
+      }
+    });
+  }
+
   function redraw() {
     coverageLayer.clearLayers();
     var counts = { total: 0, directional: 0, omni: 0, unknown: 0, hidden: 0 };
@@ -675,7 +841,11 @@
         addCoverageShapes(node, meters, color);
         coverageLayer.addLayer(makeMarker(node, color));
       });
+    } else {
+      ensureClassicStationLayers();
     }
+
+    applyStationMarkerFilter();
 
     if (control) {
       if (typeof control.updateStatus === 'function') control.updateStatus(counts);
@@ -795,6 +965,34 @@
         '<div class="meshmap-coverage-legend">' +
         '<span class="meshmap-coverage-legend-known">Antenna Pattern</span>' +
         '<span class="meshmap-coverage-legend-unknown">Pattern Unknown</span>' +
+        '</div>' +
+        '<div class="meshmap-coverage-props" hidden>' +
+        '<div class="meshmap-coverage-props-header">' +
+        '<div class="meshmap-coverage-props-title">Node properties</div>' +
+        '<button type="button" class="meshmap-coverage-props-close" aria-label="Close">&times;</button>' +
+        '</div>' +
+        '<div class="meshmap-coverage-props-name"></div>' +
+        '<label class="meshmap-coverage-props-field">Antenna' +
+        '<input type="text" class="meshmap-coverage-props-desc" spellcheck="false"></label>' +
+        '<div class="meshmap-coverage-props-grid">' +
+        '<label class="meshmap-coverage-props-field">Gain (dBi)' +
+        '<input type="number" step="any" class="meshmap-coverage-props-gain"></label>' +
+        '<label class="meshmap-coverage-props-field">Beam width (°)' +
+        '<input type="number" step="any" min="0" max="360" class="meshmap-coverage-props-beam"></label>' +
+        '<label class="meshmap-coverage-props-field">Azimuth (°)' +
+        '<input type="number" step="any" min="0" max="360" class="meshmap-coverage-props-az"></label>' +
+        '<label class="meshmap-coverage-props-field">Elevation (°)' +
+        '<input type="number" step="any" class="meshmap-coverage-props-el"></label>' +
+        '<label class="meshmap-coverage-props-field">Height (m)' +
+        '<input type="number" step="any" class="meshmap-coverage-props-ht"></label>' +
+        '<label class="meshmap-coverage-props-field meshmap-coverage-props-field-distance">Distance (<span class="meshmap-coverage-props-dist-unit">mi</span>)' +
+        '<input type="number" step="any" min="0" class="meshmap-coverage-props-dist"></label>' +
+        '</div>' +
+        '<div class="meshmap-coverage-props-actions">' +
+        '<button type="button" class="meshmap-coverage-props-clear">Clear</button>' +
+        '<button type="button" class="meshmap-coverage-props-done">Done</button>' +
+        '</div>' +
+        '<div class="meshmap-coverage-props-hint">Clear restores polled node values.</div>' +
         '</div>';
 
       this._container = container;
@@ -814,6 +1012,20 @@
       this._status = panel.querySelector('.meshmap-coverage-status');
       this._legend = panel.querySelector('.meshmap-coverage-legend');
       this._clearBtn = panel.querySelector('.meshmap-coverage-clear');
+      this._props = panel.querySelector('.meshmap-coverage-props');
+      this._propsName = panel.querySelector('.meshmap-coverage-props-name');
+      this._propsDesc = panel.querySelector('.meshmap-coverage-props-desc');
+      this._propsGain = panel.querySelector('.meshmap-coverage-props-gain');
+      this._propsBeam = panel.querySelector('.meshmap-coverage-props-beam');
+      this._propsAz = panel.querySelector('.meshmap-coverage-props-az');
+      this._propsEl = panel.querySelector('.meshmap-coverage-props-el');
+      this._propsHt = panel.querySelector('.meshmap-coverage-props-ht');
+      this._propsDist = panel.querySelector('.meshmap-coverage-props-dist');
+      this._propsDistUnit = panel.querySelector('.meshmap-coverage-props-dist-unit');
+      this._propsClear = panel.querySelector('.meshmap-coverage-props-clear');
+      this._propsDone = panel.querySelector('.meshmap-coverage-props-done');
+      this._propsClose = panel.querySelector('.meshmap-coverage-props-close');
+      this._propsNodeName = null;
       this._suggestItems = [];
       this._suggestActive = -1;
 
@@ -859,17 +1071,43 @@
         state.names = [];
         state.colors = {};
         state.noFill = {};
+        state.overrides = {};
         state.bandwidths = [];
         state.bands = [];
         state.channels = [];
         saveState();
+        self.closePropsDialog();
         self._renderChips();
         self._syncCheckboxes();
         redraw();
       });
 
+      var propsInputs = [
+        this._propsDesc, this._propsGain, this._propsBeam,
+        this._propsAz, this._propsEl, this._propsHt, this._propsDist
+      ];
+      propsInputs.forEach(function (input) {
+        L.DomEvent.on(input, 'change', function () { self._applyPropsForm(); });
+        L.DomEvent.on(input, 'input', function () { self._applyPropsForm(); });
+      });
+      L.DomEvent.on(this._propsClear, 'click', function (ev) {
+        L.DomEvent.preventDefault(ev);
+        self._clearPropsToPolled();
+      });
+      L.DomEvent.on(this._propsDone, 'click', function (ev) {
+        L.DomEvent.preventDefault(ev);
+        self._applyPropsForm();
+        self.closePropsDialog();
+      });
+      L.DomEvent.on(this._propsClose, 'click', function (ev) {
+        L.DomEvent.preventDefault(ev);
+        self._applyPropsForm();
+        self.closePropsDialog();
+      });
+
       this._fillCheckboxes();
       this._unit.textContent = rangeUnitLabel();
+      this._propsDistUnit.textContent = rangeUnitLabel();
       this._range.value = String(state.range);
       this._rangeNum.value = String(state.range);
       this._renderChips();
@@ -896,6 +1134,69 @@
       L.DomUtil.removeClass(this._container, 'meshmap-coverage-expanded');
       L.DomUtil.removeClass(this._panel, 'meshmap-coverage-panel-open');
       this._hideSuggest();
+      this.closePropsDialog();
+    },
+
+    openPropsDialog: function (name) {
+      var node = findRfNodeByName(name);
+      if (!node || !this._props) return;
+      this._propsNodeName = node.node;
+      this._propsName.textContent = node.node;
+      this._propsDistUnit.textContent = rangeUnitLabel();
+      this._fillPropsForm(effectiveNode(node));
+      this._props.hidden = false;
+      L.DomUtil.addClass(this._panel, 'meshmap-coverage-props-open');
+    },
+
+    closePropsDialog: function () {
+      if (!this._props) return;
+      this._props.hidden = true;
+      this._propsNodeName = null;
+      L.DomUtil.removeClass(this._panel, 'meshmap-coverage-props-open');
+    },
+
+    _fillPropsForm: function (node) {
+      var desc = node.antDesc;
+      if (!desc || desc === 'Not Available') desc = '';
+      this._propsDesc.value = desc;
+      this._propsGain.value = formatPropNum(num(node.antGain));
+      this._propsBeam.value = formatPropNum(num(node.antBeam));
+      this._propsAz.value = formatPropNum(num(node.antAzimuth));
+      this._propsEl.value = formatPropNum(num(node.antElevation));
+      this._propsHt.value = formatPropNum(num(node.antHeight));
+      this._propsDist.value = formatPropNum(metersToPanel(node.lqmDistanceM));
+    },
+
+    _readPropsForm: function () {
+      var desc = String(this._propsDesc.value || '').trim();
+      return {
+        antDesc: desc,
+        antGain: num(this._propsGain.value),
+        antBeam: num(this._propsBeam.value),
+        antAzimuth: num(this._propsAz.value),
+        antElevation: num(this._propsEl.value),
+        antHeight: num(this._propsHt.value),
+        lqmDistanceM: panelToMeters(this._propsDist.value)
+      };
+    },
+
+    _applyPropsForm: function () {
+      if (!this._propsNodeName) return;
+      setOverride(this._propsNodeName, this._readPropsForm());
+      saveState();
+      this._renderChips();
+      redraw();
+    },
+
+    _clearPropsToPolled: function () {
+      if (!this._propsNodeName) return;
+      var node = findRfNodeByName(this._propsNodeName);
+      if (!node) return;
+      clearOverride(this._propsNodeName);
+      this._fillPropsForm(node);
+      saveState();
+      this._renderChips();
+      redraw();
     },
 
     setModeSelect: function (mode) {
@@ -1038,10 +1339,23 @@
             : '') +
           '>' +
           colorHtml +
-          '<span class="meshmap-coverage-chip-label">' + escapeHtml(name) + '</span>' +
+          '<button type="button" class="meshmap-coverage-chip-label" title="Edit radio map properties">' +
+          escapeHtml(name) + '</button>' +
           '<button type="button" class="meshmap-coverage-chip-remove" aria-label="Remove ' +
           escapeHtml(name) + '">&times;</button></span>';
       }).join('');
+
+      Array.prototype.forEach.call(this._chips.querySelectorAll('.meshmap-coverage-chip-label'), function (btn) {
+        L.DomEvent.on(btn, 'click', function (ev) {
+          L.DomEvent.preventDefault(ev);
+          L.DomEvent.stopPropagation(ev);
+          var chip = btn.closest
+            ? btn.closest('.meshmap-coverage-chip')
+            : btn.parentNode;
+          var name = chip.getAttribute('data-name');
+          self.openPropsDialog(name);
+        });
+      });
 
       Array.prototype.forEach.call(this._chips.querySelectorAll('.meshmap-coverage-chip-swatch'), function (btn) {
         L.DomEvent.on(btn, 'click', function (ev) {
@@ -1177,6 +1491,7 @@
       this._renderChips();
       if (state.mode === 'off') setMode('node');
       else redraw();
+      this.openPropsDialog(hit.name);
     },
 
     _onNameKey: function (ev) {
@@ -1208,10 +1523,10 @@
     buildOptionLists(rfNodes);
     loadState();
 
-    // Layer-control session may have Radio Coverage on from an older checkbox UI
+    // Session overlay list may still have Radio Coverage checked while Show
+    // coverage is Off (incomplete overlay seeding). Prefer the mode setting.
     if (state.mode === 'off' && isLayerVisible()) {
-      state.mode = 'band';
-      saveState();
+      setLayerVisible(false);
     }
 
     if (control) {
