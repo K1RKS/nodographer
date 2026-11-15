@@ -158,14 +158,64 @@ var MeshmapSnrCalculator = (function () {
     return !!(typeof mapInfo !== 'undefined' && mapInfo && mapInfo.kilometers);
   }
 
-  function linkDistance(linkInfo) {
-    if (!linkInfo) {
+  var MI_PER_KM = 1 / 1.609344;
+  var KM_PER_MI = 1.609344;
+
+  /** Great-circle distance in miles between two lat/lon pairs. */
+  function haversineMiles(lat1, lon1, lat2, lon2) {
+    var a1 = num(lat1);
+    var o1 = num(lon1);
+    var a2 = num(lat2);
+    var o2 = num(lon2);
+    if (a1 === null || o1 === null || a2 === null || o2 === null) {
       return null;
     }
-    if (useKilometers()) {
-      return num(linkInfo.distanceKM);
+    var toRad = Math.PI / 180;
+    var dLat = (a2 - a1) * toRad;
+    var dLon = (o2 - o1) * toRad;
+    var s1 = Math.sin(dLat / 2);
+    var s2 = Math.sin(dLon / 2);
+    var h =
+      s1 * s1 +
+      Math.cos(a1 * toRad) * Math.cos(a2 * toRad) * s2 * s2;
+    return 2 * 3958.7613 * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+
+  /**
+   * Link path length in the calculator's display units (mi or km).
+   * Prefer poller distance fields; fall back to haversine from endpoint coords.
+   * Used as the share-URL `rd` readout marker (vertical cursor on the SNR graph).
+   */
+  function linkDistance(linkInfo, fromDevice, toDevice) {
+    var wantKm = useKilometers();
+    var mi = num(linkInfo && linkInfo.distanceMiles);
+    var km = num(linkInfo && linkInfo.distanceKM);
+    if (mi === null && km !== null) {
+      mi = km * MI_PER_KM;
     }
-    return num(linkInfo.distanceMiles);
+    if (km === null && mi !== null) {
+      km = mi * KM_PER_MI;
+    }
+    if (mi === null) {
+      var lat1 = fromDevice && fromDevice.lat;
+      var lon1 = fromDevice && fromDevice.lon;
+      var lat2 =
+        (toDevice && toDevice.lat) != null
+          ? toDevice.lat
+          : linkInfo && linkInfo.linkLat;
+      var lon2 =
+        (toDevice && toDevice.lon) != null
+          ? toDevice.lon
+          : linkInfo && linkInfo.linkLon;
+      mi = haversineMiles(lat1, lon1, lat2, lon2);
+      if (mi !== null) {
+        km = mi * KM_PER_MI;
+      }
+    }
+    if (wantKm) {
+      return km;
+    }
+    return mi;
   }
 
   function findReverseLink(peerDevice, sourceName) {
@@ -282,6 +332,14 @@ var MeshmapSnrCalculator = (function () {
     if (snr !== null) {
       linkLines.push('  measured SNR: ' + snr + ' dB');
     }
+    var rdComment = linkDistance(linkInfo, fromDevice, toDevice);
+    if (rdComment !== null && rdComment >= 0) {
+      linkLines.push(
+        '  calculator readout (rd): ' +
+          Math.round(rdComment * 100) / 100 +
+          (useKilometers() ? ' km' : ' mi')
+      );
+    }
     linkLines.push('  note: TX power not available from mesh data (calculator defaults used)');
     parts.push(linkLines.join('\n'));
     return sanitizeComments(parts.join('\n'));
@@ -307,11 +365,16 @@ var MeshmapSnrCalculator = (function () {
     toName = toName || (toDevice && toDevice.node) || (linkInfo && linkInfo.hostname) || 'Radio B';
     var freqBw = pickFreqBw(fromDevice, toDevice);
     var units = useKilometers() ? 'km' : 'mi';
-    var rd = linkDistance(linkInfo);
+    // rd = actual RF link length so the calculator readout marker lands on this hop
+    var rd = linkDistance(linkInfo, fromDevice, toDevice);
     if (rd === null || rd < 0) {
       rd = 10;
     }
-    var maxD = Math.max(units === 'km' ? 80 : 50, Math.ceil(rd * 2));
+    var floorMax = units === 'km' ? 80 : 50;
+    var maxD = Math.max(floorMax, Math.ceil(rd * 2));
+    if (rd > 0 && maxD < rd * 1.1) {
+      maxD = Math.ceil(rd * 1.25);
+    }
     var aGain = fromDevice ? num(fromDevice.antGain) : null;
     var bGain = toDevice ? num(toDevice.antGain) : null;
     var aNf = num(linkInfo && linkInfo.noise);
