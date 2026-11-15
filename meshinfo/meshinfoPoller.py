@@ -262,6 +262,11 @@ class NodeInfo:
     antAzimuth: Optional[float] = None
     antElevation: Optional[float] = None
     antHeight: Optional[float] = None
+    # LQM-applied RF distance in meters (from sysinfo?lqm=1 → lqm.info.distances).
+    # FUTURE (AREDN firmware): when /a/sysinfo meshrf exports the configured radio
+    # Max Distance (setup.globals.radioN_distance / mode.distance on the Radio page),
+    # prefer that field over this LQM-applied value.
+    lqmDistanceM: Optional[float] = None
 
 
 class MySQLAdapter:
@@ -347,6 +352,7 @@ class MySQLAdapter:
                         `antAzimuth` DECIMAL(5,1) DEFAULT NULL,
                         `antElevation` DECIMAL(5,1) DEFAULT NULL,
                         `antHeight` DECIMAL(7,1) DEFAULT NULL,
+                        `lqmDistanceM` DECIMAL(10,1) DEFAULT NULL,
                         `response_time_ms` FLOAT DEFAULT 0.0,
                         INDEX `idx_node` (`node`),
                         INDEX `idx_hops` (`hopsAway`),
@@ -354,11 +360,12 @@ class MySQLAdapter:
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """)
 
-                # Existing databases predate the antenna position columns
+                # Existing databases predate the antenna position / LQM distance columns
                 for col_def in (
                     "`antAzimuth` DECIMAL(5,1) DEFAULT NULL",
                     "`antElevation` DECIMAL(5,1) DEFAULT NULL",
                     "`antHeight` DECIMAL(7,1) DEFAULT NULL",
+                    "`lqmDistanceM` DECIMAL(10,1) DEFAULT NULL",
                 ):
                     try:
                         await cur.execute(f"ALTER TABLE `{sql_db_tbl_node}` ADD COLUMN {col_def}")
@@ -465,12 +472,12 @@ class MySQLAdapter:
                         firmware_mfg, grid_square, lan_ip, services, description,
                         mesh_supernode, mesh_gateway, freq, link_info, hopsAway,
                         meshRF, last_seen, antGain, antBeam, antDesc, antBuiltin, response_time_ms,
-                        antAzimuth, antElevation, antHeight
+                        antAzimuth, antElevation, antHeight, lqmDistanceM
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s,
-                        %s, %s, %s
+                        %s, %s, %s, %s
                     ) ON DUPLICATE KEY UPDATE
                         node=%s, uptime=%s, loadavg=%s, model=%s, firmware_version=%s,
                         ssid=%s, channel=%s, chanbw=%s, tunnel_installed=%s,
@@ -480,7 +487,7 @@ class MySQLAdapter:
                         mesh_gateway=%s, freq=%s, link_info=COALESCE(%s, link_info), hopsAway=%s,
                         meshRF=%s, last_seen=%s, antGain=%s, antBeam=%s,
                         antDesc=%s, antBuiltin=%s, response_time_ms=%s,
-                        antAzimuth=%s, antElevation=%s, antHeight=%s
+                        antAzimuth=%s, antElevation=%s, antHeight=%s, lqmDistanceM=%s
                 """
 
                 values = (
@@ -496,6 +503,7 @@ class MySQLAdapter:
                     last_seen_val, node_data.antGain, node_data.antBeam, node_data.antDesc,
                     node_data.antBuiltin, node_data.response_time_ms,
                     node_data.antAzimuth, node_data.antElevation, node_data.antHeight,
+                    node_data.lqmDistanceM,
                     node_data.node, node_data.uptime, loadavg, node_data.model,
                     node_data.firmware_version, node_data.ssid, node_data.channel,
                     node_data.chanbw, node_data.tunnel_installed,
@@ -507,7 +515,8 @@ class MySQLAdapter:
                     link_info_update, node_data.hopsAway, node_data.meshRF,
                     last_seen_val, node_data.antGain, node_data.antBeam, node_data.antDesc,
                     node_data.antBuiltin, node_data.response_time_ms,
-                    node_data.antAzimuth, node_data.antElevation, node_data.antHeight
+                    node_data.antAzimuth, node_data.antElevation, node_data.antHeight,
+                    node_data.lqmDistanceM
                 )
 
                 try:
@@ -734,12 +743,12 @@ class NodePoller:
             node_info.response_time_ms = round((time.time() - start_time) * 1000, 2)
             node_info.last_seen = poll_time
             
-            # Fetch link_info separately for each node (modern first, legacy fallback)
+            # Fetch link_info + LQM together (lqm=1 adds lqm.info.distances; no extra RTT)
             link_candidates = [
-                f"http://{ip}/a/sysinfo?link_info=1",
-                f"http://{ip}:8080/a/sysinfo?link_info=1",
-                f"http://{ip}/cgi-bin/sysinfo.json?link_info=1",
-                f"http://{ip}:8080/cgi-bin/sysinfo.json?link_info=1",
+                f"http://{ip}/a/sysinfo?link_info=1&lqm=1",
+                f"http://{ip}:8080/a/sysinfo?link_info=1&lqm=1",
+                f"http://{ip}/cgi-bin/sysinfo.json?link_info=1&lqm=1",
+                f"http://{ip}:8080/cgi-bin/sysinfo.json?link_info=1&lqm=1",
             ]
             link_info_data = None
             for url in link_candidates:
@@ -751,6 +760,9 @@ class NodePoller:
                 link_info_dict = link_info_data.get('link_info')
                 if link_info_dict and isinstance(link_info_dict, dict):
                     node_info.link_info = pickle.dumps(link_info_dict).hex()
+                lqm_m = self._lqm_distance_m(link_info_data)
+                if lqm_m is not None:
+                    node_info.lqmDistanceM = lqm_m
             
             # Fetch services separately for each node (modern first, legacy fallback), local services only
             services_candidates = [
@@ -900,6 +912,38 @@ class NodePoller:
         if not math.isfinite(f):
             return None
         return round(f, ndigits) if ndigits is not None else f
+
+    @staticmethod
+    def _lqm_distance_m(data: Dict) -> Optional[float]:
+        """Largest positive LQM-applied RF distance (meters) from sysinfo?lqm=1.
+
+        Reads lqm.info.distances (iface → meters). This is the distance LQM is
+        currently applying (farthest RF neighbor, capped by configured max), not
+        necessarily the Radio-page Max Distance setting.
+
+        FUTURE (AREDN): when meshrf includes configured mode.distance /
+        radioN_distance, prefer that over this applied value.
+        """
+        if not isinstance(data, dict):
+            return None
+        lqm = data.get('lqm')
+        if not isinstance(lqm, dict):
+            return None
+        info = lqm.get('info') if isinstance(lqm.get('info'), dict) else lqm
+        distances = info.get('distances') if isinstance(info, dict) else None
+        if not isinstance(distances, dict) or not distances:
+            return None
+        best: Optional[float] = None
+        for value in distances.values():
+            try:
+                f = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(f) or f <= 0:
+                continue
+            if best is None or f > best:
+                best = f
+        return round(best, 1) if best is not None else None
 
 
 # ============================================================================
@@ -1950,6 +1994,7 @@ class MeshPollingDaemon:
                 'antAzimuth': NodePoller._optional_float(node.get('antAzimuth')),
                 'antElevation': NodePoller._optional_float(node.get('antElevation')),
                 'antHeight': NodePoller._optional_float(node.get('antHeight')),
+                'lqmDistanceM': NodePoller._optional_float(node.get('lqmDistanceM'), 1),
                 'mesh_supernode': node.get('mesh_supernode', 'false'),
                 'mesh_gateway': node.get('mesh_gateway', 'false'),
                 'last_seen': last_seen,
@@ -2298,6 +2343,7 @@ async def _flush_database(config: ConfigManager):
                     `antAzimuth` DECIMAL(5,1) DEFAULT NULL,
                     `antElevation` DECIMAL(5,1) DEFAULT NULL,
                     `antHeight` DECIMAL(7,1) DEFAULT NULL,
+                    `lqmDistanceM` DECIMAL(10,1) DEFAULT NULL,
                     `response_time_ms` FLOAT DEFAULT 0.0,
                     INDEX `idx_node` (`node`),
                     INDEX `idx_hops` (`hopsAway`),

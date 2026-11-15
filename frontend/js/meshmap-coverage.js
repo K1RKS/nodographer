@@ -4,6 +4,10 @@
  * Show modes: Off (default), Band, Node, Bandwidth. Draws cones/circles from
  * antenna pattern when known (Node mode always draws as omni if unknown),
  * colors by the selected mode, and places matching colored node icons.
+ *
+ * Fill radius uses LQM-applied distance (lqmDistanceM) when > 0.5 mi, capped by
+ * the panel max range; stroke-only continues out to the panel max when larger.
+ * FUTURE (AREDN): prefer configured meshrf Max Distance once sysinfo exports it.
  */
 (function (window) {
   var RF_BANDS = ['900', '2ghz', '3ghz', '5ghz'];
@@ -36,6 +40,10 @@
   var NODE_RESULT_LIMIT = 12;
   var ARC_STEP_DEG = 2;
   var EARTH_RADIUS_M = 6371000;
+  // LQM distances at/under this are treated as "not real" (use panel max only)
+  var LQM_MIN_REAL_M = 0.5 * 1609.344;
+  // FUTURE (AREDN firmware): when sysinfo meshrf exports configured radio Max
+  // Distance (mode.distance / radioN_distance), prefer that over lqmDistanceM.
 
   var UNKNOWN_STYLE = {
     color: '#bbbbbb',
@@ -64,6 +72,7 @@
     hideUnknown: false,
     names: [],
     colors: {},
+    noFill: {},
     bandwidths: [],
     bands: [],
     channels: [],
@@ -278,8 +287,20 @@
   }
 
   function removeNodeColor(name) {
-    if (!state.colors) return;
-    delete state.colors[colorKey(name)];
+    var key = colorKey(name);
+    if (state.colors) delete state.colors[key];
+    if (state.noFill) delete state.noFill[key];
+  }
+
+  function nodeNoFill(name) {
+    return !!(state.noFill && state.noFill[colorKey(name)]);
+  }
+
+  function setNodeNoFill(name, on) {
+    if (!state.noFill) state.noFill = {};
+    var key = colorKey(name);
+    if (on) state.noFill[key] = true;
+    else delete state.noFill[key];
   }
 
   function coverageColor(node) {
@@ -318,6 +339,7 @@
           antBeam: d.antBeam,
           antAzimuth: d.antAzimuth,
           antGain: d.antGain,
+          lqmDistanceM: d.lqmDistanceM,
           _bandKey: bandFromFreq(d.freq, bandKey),
           _device: d
         });
@@ -394,6 +416,7 @@
       hideUnknown: false,
       names: [],
       colors: {},
+      noFill: {},
       bandwidths: [],
       bands: [],
       channels: [],
@@ -412,6 +435,11 @@
         if (hex) state.colors[colorKey(k)] = hex;
       });
     }
+    if (c.noFill && typeof c.noFill === 'object') {
+      Object.keys(c.noFill).forEach(function (k) {
+        if (c.noFill[k]) state.noFill[colorKey(k)] = true;
+      });
+    }
     if (Array.isArray(c.bandwidths)) state.bandwidths = c.bandwidths.slice();
     if (Array.isArray(c.bands)) state.bands = c.bands.slice();
     if (Array.isArray(c.channels)) state.channels = c.channels.slice();
@@ -421,6 +449,14 @@
     }
     // Ensure every filtered name has a picker color
     state.names.forEach(function (name) { ensureNodeColor(name); });
+  }
+
+  function copyBoolMap(src) {
+    var out = {};
+    Object.keys(src || {}).forEach(function (k) {
+      if (src[k]) out[k] = true;
+    });
+    return out;
   }
 
   function saveState() {
@@ -436,6 +472,7 @@
         Object.keys(src).forEach(function (k) { out[k] = src[k]; });
         return out;
       })(),
+      noFill: copyBoolMap(state.noFill),
       bandwidths: state.bandwidths.slice(),
       bands: state.bands.slice(),
       channels: state.channels.slice(),
@@ -506,6 +543,25 @@
     };
   }
 
+  function outlineStyle(color) {
+    return {
+      color: color,
+      weight: 1.5,
+      fill: false,
+      interactive: false
+    };
+  }
+
+  function unknownOutlineStyle() {
+    return {
+      color: '#bbbbbb',
+      weight: 1.5,
+      dashArray: '4,6',
+      fill: false,
+      interactive: false
+    };
+  }
+
   function circleOptions(base, meters) {
     return {
       radius: meters,
@@ -519,22 +575,55 @@
     };
   }
 
-  function makeShape(node, meters, color) {
-    var kind = classify(node);
-    var useUnknownGrey = kind === 'unknown' && state.mode !== 'node';
+  /** LQM-applied distance in meters when it looks like a real RF reach. */
+  function realLqmMeters(node) {
+    var m = num(node.lqmDistanceM);
+    if (m === null || m <= LQM_MIN_REAL_M) return null;
+    return m;
+  }
 
+  function geometryAtRadius(node, meters, style, useUnknownGrey) {
     if (useUnknownGrey) {
-      return L.circle([node.lat, node.lon], circleOptions(UNKNOWN_STYLE, meters));
+      return L.circle([node.lat, node.lon], circleOptions(style, meters));
     }
-
-    var style = knownStyle(color);
-    // Node mode: unknown antenna still draws as assumed omni in the node color
+    var kind = classify(node);
     if (kind === 'directional') {
       var az = num(node.antAzimuth);
       var beam = num(node.antBeam);
       return L.polygon(coneLatLngs(node.lat, node.lon, az, beam, meters), style);
     }
+    // omni, or Node-mode unknown (assumed omni)
     return L.circle([node.lat, node.lon], circleOptions(style, meters));
+  }
+
+  /**
+   * Draw filled pattern out to min(LQM, panelMax) when LQM is real; stroke-only
+   * out to panelMax when panelMax is larger. Panel max always caps the draw.
+   * Per-node "No fill" uses outline only (color still on stroke + node icon).
+   */
+  function addCoverageShapes(node, panelMeters, color) {
+    var kind = classify(node);
+    var useUnknownGrey = kind === 'unknown' && state.mode !== 'node';
+    var lqmM = realLqmMeters(node);
+    var fillM = lqmM !== null ? Math.min(lqmM, panelMeters) : panelMeters;
+    var noFill = state.names.length > 0 && nodeNoFill(node.node);
+
+    if (noFill) {
+      var strokeOnly = useUnknownGrey ? unknownOutlineStyle() : outlineStyle(color);
+      coverageLayer.addLayer(geometryAtRadius(node, fillM, strokeOnly, useUnknownGrey));
+      if (lqmM !== null && panelMeters > fillM + 1) {
+        coverageLayer.addLayer(geometryAtRadius(node, panelMeters, strokeOnly, useUnknownGrey));
+      }
+      return;
+    }
+
+    var fillStyle = useUnknownGrey ? UNKNOWN_STYLE : knownStyle(color);
+    coverageLayer.addLayer(geometryAtRadius(node, fillM, fillStyle, useUnknownGrey));
+
+    if (lqmM !== null && panelMeters > fillM + 1) {
+      var strokeStyle = useUnknownGrey ? unknownOutlineStyle() : outlineStyle(color);
+      coverageLayer.addLayer(geometryAtRadius(node, panelMeters, strokeStyle, useUnknownGrey));
+    }
   }
 
   function makeMarker(node, color) {
@@ -583,7 +672,7 @@
         if (!nodeMatches(node)) return;
         if (isCoverageHidden(node)) return;
         var color = coverageColor(node);
-        coverageLayer.addLayer(makeShape(node, meters, color));
+        addCoverageShapes(node, meters, color);
         coverageLayer.addLayer(makeMarker(node, color));
       });
     }
@@ -769,6 +858,7 @@
         L.DomEvent.preventDefault(ev);
         state.names = [];
         state.colors = {};
+        state.noFill = {};
         state.bandwidths = [];
         state.bands = [];
         state.channels = [];
@@ -905,18 +995,43 @@
       });
     },
 
+    _closeColorPopups: function (except) {
+      Array.prototype.forEach.call(this._chips.querySelectorAll('.meshmap-coverage-color-popup-open'), function (wrap) {
+        if (except && wrap === except) return;
+        L.DomUtil.removeClass(wrap, 'meshmap-coverage-color-popup-open');
+      });
+    },
+
     _renderChips: function () {
       var self = this;
       this._chips.innerHTML = state.names.map(function (name) {
         var disabled = isNameChipDisabled(name);
         var color = ensureNodeColor(name);
+        var noFill = nodeNoFill(name);
         var colorHtml = disabled
           ? ''
-          : '<input type="color" class="meshmap-coverage-chip-color" value="' + escapeHtml(color) +
-            '" title="Coverage color for ' + escapeHtml(name) + '" aria-label="Coverage color for ' +
-            escapeHtml(name) + '">';
+          : '<span class="meshmap-coverage-color-wrap">' +
+            '<button type="button" class="meshmap-coverage-chip-swatch' +
+            (noFill ? ' meshmap-coverage-chip-swatch-nofill' : '') +
+            '" style="background-color:' + escapeHtml(color) + '" title="Coverage color for ' +
+            escapeHtml(name) + '" aria-label="Coverage color for ' + escapeHtml(name) +
+            '" aria-haspopup="true" aria-expanded="false"></button>' +
+            '<div class="meshmap-coverage-color-popup" role="dialog" aria-label="Coverage color">' +
+            '<div class="meshmap-coverage-color-popup-row">' +
+            '<span class="meshmap-coverage-color-popup-label">Color</span>' +
+            '<input type="color" class="meshmap-coverage-chip-color" value="' + escapeHtml(color) + '">' +
+            '</div>' +
+            '<div class="meshmap-coverage-color-popup-row meshmap-coverage-color-popup-fill">' +
+            '<label><input type="radio" name="fill-' + escapeHtml(colorKey(name)) +
+            '" value="fill"' + (!noFill ? ' checked' : '') + '> Fill</label>' +
+            '<label><input type="radio" name="fill-' + escapeHtml(colorKey(name)) +
+            '" value="nofill"' + (noFill ? ' checked' : '') + '> No fill</label>' +
+            '</div>' +
+            '</div>' +
+            '</span>';
         return '<span class="meshmap-coverage-chip' +
           (disabled ? ' meshmap-coverage-chip-disabled' : '') +
+          (noFill && !disabled ? ' meshmap-coverage-chip-nofill' : '') +
           '" data-name="' + escapeHtml(name) + '"' +
           (disabled
             ? ' title="Hidden: antenna beam width or direction unknown"'
@@ -927,20 +1042,62 @@
           '<button type="button" class="meshmap-coverage-chip-remove" aria-label="Remove ' +
           escapeHtml(name) + '">&times;</button></span>';
       }).join('');
+
+      Array.prototype.forEach.call(this._chips.querySelectorAll('.meshmap-coverage-chip-swatch'), function (btn) {
+        L.DomEvent.on(btn, 'click', function (ev) {
+          L.DomEvent.preventDefault(ev);
+          L.DomEvent.stopPropagation(ev);
+          var wrap = btn.parentNode;
+          var open = L.DomUtil.hasClass(wrap, 'meshmap-coverage-color-popup-open');
+          self._closeColorPopups();
+          if (!open) {
+            L.DomUtil.addClass(wrap, 'meshmap-coverage-color-popup-open');
+            btn.setAttribute('aria-expanded', 'true');
+          } else {
+            btn.setAttribute('aria-expanded', 'false');
+          }
+        });
+      });
+
+      Array.prototype.forEach.call(this._chips.querySelectorAll('.meshmap-coverage-color-popup'), function (popup) {
+        L.DomEvent.on(popup, 'click', function (ev) {
+          L.DomEvent.stopPropagation(ev);
+        });
+      });
+
       Array.prototype.forEach.call(this._chips.querySelectorAll('.meshmap-coverage-chip-color'), function (input) {
         L.DomEvent.on(input, 'input', function () {
-          var chip = input.parentNode;
+          var chip = input.closest('.meshmap-coverage-chip');
           var name = chip.getAttribute('data-name');
           var hex = normalizeHexColor(input.value);
           if (!hex) return;
           state.colors[colorKey(name)] = hex;
+          var swatch = chip.querySelector('.meshmap-coverage-chip-swatch');
+          if (swatch) swatch.style.backgroundColor = hex;
           saveState();
           redraw();
         });
-        L.DomEvent.on(input, 'click', function (ev) {
-          L.DomEvent.stopPropagation(ev);
+      });
+
+      Array.prototype.forEach.call(this._chips.querySelectorAll('.meshmap-coverage-color-popup-fill input[type="radio"]'), function (radio) {
+        L.DomEvent.on(radio, 'change', function () {
+          if (!radio.checked) return;
+          var chip = radio.closest('.meshmap-coverage-chip');
+          var name = chip.getAttribute('data-name');
+          var noFill = radio.value === 'nofill';
+          setNodeNoFill(name, noFill);
+          if (noFill) L.DomUtil.addClass(chip, 'meshmap-coverage-chip-nofill');
+          else L.DomUtil.removeClass(chip, 'meshmap-coverage-chip-nofill');
+          var swatch = chip.querySelector('.meshmap-coverage-chip-swatch');
+          if (swatch) {
+            if (noFill) L.DomUtil.addClass(swatch, 'meshmap-coverage-chip-swatch-nofill');
+            else L.DomUtil.removeClass(swatch, 'meshmap-coverage-chip-swatch-nofill');
+          }
+          saveState();
+          redraw();
         });
       });
+
       Array.prototype.forEach.call(this._chips.querySelectorAll('.meshmap-coverage-chip-remove'), function (btn) {
         L.DomEvent.on(btn, 'click', function (ev) {
           L.DomEvent.preventDefault(ev);
@@ -955,6 +1112,13 @@
           redraw();
         });
       });
+
+      if (!this._colorPopupDocBound) {
+        this._colorPopupDocBound = true;
+        L.DomEvent.on(document, 'click', function () {
+          self._closeColorPopups();
+        });
+      }
     },
 
     _hideSuggest: function () {
