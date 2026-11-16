@@ -9,18 +9,19 @@ When you change Nodographer **frontend** files (HTML/CSS/JS/images under `fronte
 
 ## Host (test deploy target)
 
+- URL: http://k1rks-testmap.local.mesh/meshmap/ (canonical test meshmap)
 - SSH: `k1rks-testmap` (user `meshmap`)
 - Docroot: `/srv/meshmap/frontend/` (also linked from `/var/www/html/meshmap`)
-- Full `/srv/meshmap` install on this host (frontend + meshinfo may both be present)
+- Full `/srv/meshmap` install on this host (frontend; meshinfo data may be proxied)
 
 ## How
 
 - `scp` changed files into `/tmp/` then `cp` into the matching paths under `/srv/meshmap/frontend/` (`js/`, `css/`, `images/`, `index.html`, etc.)
 - `chmod 644` on installed files (owner is typically `meshmap`)
-- Verify with `grep` or file presence, then tell the user to hard-refresh
+- Verify with `grep` or file presence, then tell the user to hard-refresh at the URL above
 
 ## Do not
 
 - Deploy secrets, `.ssh*`, `.deploy-stage/`, or `reports/`
-- Treat `public-meshmap-meshweb` as the default test target anymore (use `k1rks-testmap`)
+- Use `public-meshmap-meshweb` as the default test target (use `k1rks-testmap` / the URL above)
 - Skip host deploy just because git commit/push was not requested; still deploy for testing
