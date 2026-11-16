@@ -47,6 +47,7 @@
     busy: false,
     hideLinks: true,
     offsetPaths: true,
+    autoCenter: true,
     consoleMinimized: false,
     panelOpen: false
   };
@@ -63,6 +64,7 @@
       paste: form.paste ? form.paste.value : '',
       hideLinks: !!state.hideLinks,
       offsetPaths: !!state.offsetPaths,
+      autoCenter: !!state.autoCenter,
       consoleMinimized: !!state.consoleMinimized,
       panelOpen: !!state.panelOpen,
       selected: state.selected,
@@ -524,6 +526,48 @@
     renderPathControls();
   }
 
+  /** LatLngs for all mappable hops in currently visible path(s), plus source. */
+  function collectTraceLatLngs(doc) {
+    var pts = [];
+    var seen = {};
+    function add(lat, lon) {
+      if (lat == null || lon == null || !isFinite(Number(lat)) || !isFinite(Number(lon))) return;
+      var key = Number(lat).toFixed(5) + ',' + Number(lon).toFixed(5);
+      if (seen[key]) return;
+      seen[key] = true;
+      pts.push(L.latLng(Number(lat), Number(lon)));
+    }
+    if (!doc) return pts;
+    var src = sourceLatLon(doc);
+    if (src) add(src.lat, src.lon);
+    visiblePaths(doc).forEach(function (path) {
+      (path.hops || []).forEach(function (hop) {
+        var pos = resolveHopLatLon(hop);
+        if (pos) add(pos.lat, pos.lon);
+      });
+    });
+    return pts;
+  }
+
+  function fitMapToTrace() {
+    if (!state.autoCenter || !map || !state.doc) return;
+    var pts = collectTraceLatLngs(state.doc);
+    if (!pts.length) return;
+    if (pts.length === 1) {
+      map.setView(pts[0], Math.max(map.getZoom(), 12));
+      return;
+    }
+    try {
+      map.fitBounds(L.latLngBounds(pts), {
+        padding: [48, 48],
+        maxZoom: 14,
+        animate: true
+      });
+    } catch (err) {
+      /* ignore invalid bounds */
+    }
+  }
+
   /**
    * Draw solid segments between consecutive known hops; when unknowns sit
    * between two known hops, draw a dotted chord so the path still looks complete.
@@ -777,6 +821,7 @@
     drawDoc();
     updateConsole();
     renderPathControls();
+    if (!opts.skipFit) fitMapToTrace();
     if (!opts.skipSave) saveSession();
   }
 
@@ -799,6 +844,7 @@
     allRadio.addEventListener('change', function () {
       state.selected = 'all';
       drawDoc();
+      fitMapToTrace();
       saveSession();
     });
     allLabel.appendChild(allRadio);
@@ -816,6 +862,7 @@
       radio.addEventListener('change', function () {
         state.selected = path.index;
         drawDoc();
+        fitMapToTrace();
         saveSession();
       });
       var swatch = document.createElement('span');
@@ -1150,6 +1197,8 @@
           '<input type="checkbox" class="meshmap-vtrace-hide-links"> Hide map links while tracing</label>' +
           '<label class="meshmap-vtrace-check">' +
           '<input type="checkbox" class="meshmap-vtrace-offset-paths"> Offset overlapping paths</label>' +
+          '<label class="meshmap-vtrace-check">' +
+          '<input type="checkbox" class="meshmap-vtrace-auto-center"> Auto center map</label>' +
           '<div class="meshmap-vtrace-subheader">Paths</div>' +
           '<div class="meshmap-vtrace-paths"></div>' +
           '<div class="meshmap-vtrace-status"></div>';
@@ -1177,6 +1226,7 @@
         var directBtn = panel.querySelector('.meshmap-vtrace-direct');
         var hideLinksCb = panel.querySelector('.meshmap-vtrace-hide-links');
         var offsetPathsCb = panel.querySelector('.meshmap-vtrace-offset-paths');
+        var autoCenterCb = panel.querySelector('.meshmap-vtrace-auto-center');
         var progressWrap = panel.querySelector('.meshmap-vtrace-progress');
         var progressLabel = panel.querySelector('.meshmap-vtrace-progress-label');
         var progressTrack = panel.querySelector('.meshmap-vtrace-progress-track');
@@ -1221,7 +1271,8 @@
           nIn: nIn,
           nWrap: nWrap,
           hideLinksCb: hideLinksCb,
-          offsetPathsCb: offsetPathsCb
+          offsetPathsCb: offsetPathsCb,
+          autoCenterCb: autoCenterCb
         };
 
         function syncRunsVisibility() {
@@ -1266,6 +1317,13 @@
         offsetPathsCb.addEventListener('change', function () {
           state.offsetPaths = !!offsetPathsCb.checked;
           if (state.doc) drawDoc();
+          saveSession();
+        });
+
+        autoCenterCb.checked = !!state.autoCenter;
+        autoCenterCb.addEventListener('change', function () {
+          state.autoCenter = !!autoCenterCb.checked;
+          if (state.autoCenter && state.doc) fitMapToTrace();
           saveSession();
         });
 
@@ -1452,6 +1510,10 @@
       if (typeof saved.offsetPaths === 'boolean') {
         state.offsetPaths = saved.offsetPaths;
         if (form.offsetPathsCb) form.offsetPathsCb.checked = state.offsetPaths;
+      }
+      if (typeof saved.autoCenter === 'boolean') {
+        state.autoCenter = saved.autoCenter;
+        if (form.autoCenterCb) form.autoCenterCb.checked = state.autoCenter;
       }
       if (typeof saved.consoleMinimized === 'boolean') {
         state.consoleMinimized = saved.consoleMinimized;
