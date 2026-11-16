@@ -735,6 +735,13 @@
     return bits.join(' ');
   }
 
+  function formatPathHeader(doc, path) {
+    var header = 'Path ' + path.index + ': ' +
+      (path.count != null && doc.runs ? path.count + '/' + doc.runs : String(path.count || ''));
+    if (path.reached === false) header += '  [unreachable]';
+    return header;
+  }
+
   function formatDocAsText(doc) {
     if (!doc) return '';
     var lines = [];
@@ -757,11 +764,8 @@
       }
       lines.push('');
       (doc.paths || []).forEach(function (path) {
-        var header = 'Path ' + path.index + ': ' +
-          (path.count != null && doc.runs ? path.count + '/' + doc.runs : String(path.count || ''));
-        if (path.reached === false) header += '  [unreachable]';
         lines.push('-------------------------------------------------');
-        lines.push(header);
+        lines.push(formatPathHeader(doc, path));
         (path.hops || []).forEach(function (hop) {
           lines.push('  ' + formatHopText(hop));
         });
@@ -780,18 +784,94 @@
     return lines.join('\n').replace(/\n+$/, '') + '\n';
   }
 
+  function formatStablerouteIntro(doc) {
+    var lines = [];
+    lines.push('stableroute' + (doc.version ? '(' + doc.version + ')' : '') +
+      ': destination ' + (doc.destination || '?') +
+      '  runs ' + (doc.runs != null ? doc.runs : '?'));
+    if (doc.using) lines.push(String(doc.using));
+    if (doc.source) lines.push('source ' + doc.source);
+    var sum = doc.summary || {};
+    lines.push('Summary:');
+    lines.push('  unique paths: ' + (sum.uniquePaths != null ? sum.uniquePaths : (doc.paths || []).length));
+    if (sum.shortest != null) lines.push('  shortest route: ' + sum.shortest + ' hops');
+    if (sum.longest != null) lines.push('  longest route: ' + sum.longest + ' hops');
+    if (sum.unreachable != null) lines.push('  Unreachable: ' + sum.unreachable);
+    if (sum.mostCommonCount != null && doc.runs) {
+      var pct = doc.runs ? Math.round((sum.mostCommonCount * 100) / doc.runs) : 0;
+      lines.push('  most common: ' + sum.mostCommonCount + '/' + doc.runs + ' (' + pct + '%)');
+    }
+    return lines.join('\n');
+  }
+
+  function formatPathBlockText(doc, path) {
+    var lines = [formatPathHeader(doc, path)];
+    (path.hops || []).forEach(function (hop) {
+      lines.push('  ' + formatHopText(hop));
+    });
+    return lines.join('\n');
+  }
+
+  /** Colored path blocks for the Trace report console (Copy still uses plain text). */
+  function renderConsoleHtml(doc) {
+    if (!doc || !doc.paths || !doc.paths.length) {
+      return '<pre class="meshmap-vtrace-console-plain">(no report loaded)</pre>';
+    }
+    var tool = doc.tool || 'trace';
+    var html = [];
+    if (tool === 'stableroute') {
+      html.push('<pre class="meshmap-vtrace-console-plain">' +
+        escapeHtml(formatStablerouteIntro(doc)) + '</pre>');
+      doc.paths.forEach(function (path) {
+        var color = pathColor(path.index);
+        html.push(
+          '<div class="meshmap-vtrace-console-path" style="--vtrace-path-color:' +
+            color + '; border-left-color:' + color + ';">' +
+          '<pre>' + escapeHtml(formatPathBlockText(doc, path)) + '</pre>' +
+          '</div>'
+        );
+      });
+    } else {
+      var color0 = pathColor(1);
+      var lines = [];
+      lines.push('traceroute to ' + (doc.destination || '?') +
+        (doc.source ? ' (from ' + doc.source + ')' : ''));
+      if (doc.version) lines.push('Aredn-Traceroute(' + doc.version + ')');
+      if (doc.babelMetric != null) lines.push('Babel Metric ' + doc.babelMetric);
+      var path0 = doc.paths[0] || { hops: [], index: 1 };
+      (path0.hops || []).forEach(function (hop) {
+        lines.push(' ' + formatHopText(hop));
+      });
+      html.push(
+        '<div class="meshmap-vtrace-console-path" style="--vtrace-path-color:' +
+          color0 + '; border-left-color:' + color0 + ';">' +
+        '<pre>' + escapeHtml(lines.join('\n')) + '</pre></div>'
+      );
+    }
+    return html.join('');
+  }
+
   function updateConsole() {
     if (!control || !control._consoleBody) return;
+    var hasDoc = !!(state.doc && state.doc.paths && state.doc.paths.length);
     var text = state.rawText || formatDocAsText(state.doc) || '';
-    control._consoleBody.textContent = text || '(no report loaded)';
+    if (hasDoc) {
+      control._consoleBody.innerHTML = renderConsoleHtml(state.doc);
+    } else if (text) {
+      control._consoleBody.innerHTML =
+        '<pre class="meshmap-vtrace-console-plain">' + escapeHtml(text) + '</pre>';
+    } else {
+      control._consoleBody.innerHTML =
+        '<pre class="meshmap-vtrace-console-plain">(no report loaded)</pre>';
+    }
     if (control._console) {
-      if (text && !state.consoleMinimized) {
+      if ((hasDoc || text) && !state.consoleMinimized) {
         L.DomUtil.addClass(control._console, 'meshmap-vtrace-console-open');
         L.DomUtil.removeClass(control._console, 'meshmap-vtrace-console-min');
-      } else if (text && state.consoleMinimized) {
+      } else if ((hasDoc || text) && state.consoleMinimized) {
         L.DomUtil.addClass(control._console, 'meshmap-vtrace-console-open');
         L.DomUtil.addClass(control._console, 'meshmap-vtrace-console-min');
-      } else if (!text) {
+      } else if (!hasDoc && !text) {
         L.DomUtil.removeClass(control._console, 'meshmap-vtrace-console-open');
         L.DomUtil.removeClass(control._console, 'meshmap-vtrace-console-min');
       }
@@ -1212,7 +1292,8 @@
           '<button type="button" class="meshmap-vtrace-console-toggle" aria-expanded="true">Minimize</button>' +
           '</span>' +
           '</div>' +
-          '<pre class="meshmap-vtrace-console-body">(no report loaded)</pre>';
+          '<div class="meshmap-vtrace-console-body">' +
+          '<pre class="meshmap-vtrace-console-plain">(no report loaded)</pre></div>';
 
         var paste = panel.querySelector('.meshmap-vtrace-paste');
         var parseBtn = panel.querySelector('.meshmap-vtrace-parse');
@@ -1348,9 +1429,9 @@
         paste.addEventListener('blur', persistFormFields);
 
         function reportTextForCopy() {
-          return (consoleBody && consoleBody.textContent) ||
-            state.rawText ||
+          return state.rawText ||
             formatDocAsText(state.doc) ||
+            (consoleBody && consoleBody.textContent) ||
             '';
         }
 
@@ -1442,11 +1523,12 @@
             setStatus('Source and destination are required');
             return;
           }
-          // Drop the previous overlay immediately so an old path is not mistaken
-          // for the new run finishing.
+          // Drop the previous overlay / paste immediately so an old path is not
+          // mistaken for the new run finishing.
           state.doc = null;
           state.rawText = '';
           state.selected = 'all';
+          paste.value = '';
           clearDraw();
           renderPathControls();
           updateConsole();

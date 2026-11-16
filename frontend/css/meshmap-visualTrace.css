@@ -267,13 +267,37 @@
 .meshmap-vtrace-console-body {
 	margin: 0;
 	padding: 8px 10px;
-	max-height: min(28vh, 220px);
+	max-height: min(56vh, 440px);
 	overflow: auto;
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	font-size: 11px;
 	line-height: 1.35;
+	word-break: break-word;
+}
+
+.meshmap-vtrace-console-body pre {
+	margin: 0;
+	padding: 0;
+	font: inherit;
 	white-space: pre-wrap;
 	word-break: break-word;
+	background: transparent;
+	border: 0;
+}
+
+.meshmap-vtrace-console-plain {
+	margin-bottom: 6px;
+}
+
+.meshmap-vtrace-console-path {
+	margin: 6px 0;
+	padding: 6px 8px 6px 10px;
+	border-left: 4px solid var(--vtrace-path-color, #888);
+	border-radius: 3px;
+	background: #f7f7f7;
+	background: color-mix(in srgb, var(--vtrace-path-color, #888) 12%, #fff);
+	box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vtrace-path-color, #888) 35%, transparent);
 }
 
 .meshmap-vtrace-console.meshmap-vtrace-console-min .meshmap-vtrace-console-body {
