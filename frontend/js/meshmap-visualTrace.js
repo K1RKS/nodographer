@@ -37,6 +37,8 @@
   var control = null;
   var syncingLayer = false;
   var restoringSession = false;
+  var progressTimer = null;
+  var progressStartedAt = 0;
   var state = {
     doc: null,
     rawText: '',
@@ -841,6 +843,106 @@
     }
   }
 
+  function formatElapsed(ms) {
+    var sec = Math.max(0, Math.floor(ms / 1000));
+    var m = Math.floor(sec / 60);
+    var s = sec % 60;
+    return m ? (m + ':' + (s < 10 ? '0' : '') + s) : (s + 's');
+  }
+
+  function setProgressUI(opts) {
+    opts = opts || {};
+    if (!control || !control._progress) return;
+    var wrap = control._progress;
+    var labelEl = control._progressLabel;
+    var barEl = control._progressBar;
+    var trackEl = control._progressTrack;
+    if (!opts.show) {
+      wrap.hidden = true;
+      L.DomUtil.removeClass(wrap, 'meshmap-vtrace-progress-indeterminate');
+      if (barEl) barEl.style.width = '0%';
+      return;
+    }
+    wrap.hidden = false;
+    if (labelEl) labelEl.textContent = opts.label || '';
+    if (opts.pct == null || !isFinite(opts.pct)) {
+      L.DomUtil.addClass(wrap, 'meshmap-vtrace-progress-indeterminate');
+      if (barEl) barEl.style.width = '100%';
+      if (trackEl) trackEl.setAttribute('aria-valuenow', '0');
+    } else {
+      L.DomUtil.removeClass(wrap, 'meshmap-vtrace-progress-indeterminate');
+      var pct = Math.max(0, Math.min(100, Math.round(opts.pct)));
+      if (barEl) barEl.style.width = pct + '%';
+      if (trackEl) {
+        trackEl.setAttribute('aria-valuenow', String(pct));
+      }
+    }
+  }
+
+  function stopProgress() {
+    if (progressTimer) {
+      clearInterval(progressTimer);
+      progressTimer = null;
+    }
+    setProgressUI({ show: false });
+  }
+
+  function startProgress(opts) {
+    opts = opts || {};
+    stopProgress();
+    progressStartedAt = Date.now();
+    var tool = opts.tool || 'trace';
+    var n = opts.n || 1;
+    var direct = !!opts.direct;
+    var where = direct ? 'on node' : 'via meshinfo';
+    var lastRun = null;
+    var lastTotal = n;
+
+    function tick(extra) {
+      if (extra && extra.run != null) lastRun = extra.run;
+      if (extra && extra.total != null) lastTotal = extra.total;
+      var elapsed = formatElapsed(Date.now() - progressStartedAt);
+      var label;
+      var pct = null;
+      if (tool === 'stableroute') {
+        if (lastRun != null && lastRun > 0) {
+          // Partially fill the current run slot so the bar keeps moving between hops.
+          pct = Math.max(1, Math.min(99, Math.round((100 * (lastRun - 0.15)) /
+            Math.max(1, lastTotal))));
+          label = 'stableroute ' + where + ' · run ' + lastRun + '/' + lastTotal +
+            ' · ' + elapsed;
+        } else if (!direct) {
+          // Meshinfo buffers until done — soft estimate (~8s/run), never 100% until finish.
+          var soft = Math.min(92, Math.round((100 * ((Date.now() - progressStartedAt) / 1000)) /
+            Math.max(8, n * 8)));
+          pct = soft;
+          label = 'stableroute ' + where + ' · ' + n + ' run' + (n === 1 ? '' : 's') +
+            ' · ' + elapsed;
+        } else {
+          label = 'stableroute ' + where + ' · starting · ' + elapsed;
+          pct = 2;
+        }
+      } else {
+        label = 'traceroute ' + where + ' · ' + elapsed;
+        pct = null;
+      }
+      if (extra && extra.detail) {
+        label += ' · ' + extra.detail;
+      }
+      setProgressUI({ show: true, label: label, pct: pct });
+      setStatus(label, { skipSave: true });
+    }
+
+    tick(null);
+    progressTimer = setInterval(function () { tick(null); }, 500);
+    return {
+      updateRun: function (run, total) {
+        tick({ run: run, total: total });
+      },
+      tick: tick
+    };
+  }
+
   async function runViaMeshinfo(tool, source, destination, n) {
     var url = meshinfoTraceUrl();
     if (!url) {
@@ -905,14 +1007,18 @@
     return doc;
   }
 
-  async function fetchNodeCgi(host, tool, destination, n, wantJson) {
+  function nodeCgiUrl(host, tool, destination, n, wantJson) {
     var qs = 'server=' + encodeURIComponent(destination);
     if (wantJson) qs += '&format=json';
     if (tool === 'stableroute') {
       qs += '&n=' + encodeURIComponent(String(n || 10));
     }
     var path = tool === 'stableroute' ? '/cgi-bin/stableroute' : '/cgi-bin/traceroute';
-    var resp = await fetch('http://' + host + path + '?' + qs);
+    return 'http://' + host + path + '?' + qs;
+  }
+
+  async function fetchNodeCgi(host, tool, destination, n, wantJson) {
+    var resp = await fetch(nodeCgiUrl(host, tool, destination, n, wantJson));
     var text = await resp.text();
     if (!resp.ok) {
       throw new Error('node CGI HTTP ' + resp.status);
@@ -920,20 +1026,76 @@
     return text;
   }
 
-  async function runDirect(tool, source, destination, n) {
+  /**
+   * Stream stableroute text CGI so "run X/Y" lines update the progress bar live.
+   * JSON mode buffers until done and uses -noprogress, so text is preferred here.
+   */
+  async function fetchStablerouteStreaming(host, destination, n, onProgress) {
+    var resp = await fetch(nodeCgiUrl(host, 'stableroute', destination, n, false));
+    if (!resp.ok) {
+      throw new Error('node CGI HTTP ' + resp.status);
+    }
+    if (!resp.body || typeof resp.body.getReader !== 'function') {
+      var all = await resp.text();
+      return all;
+    }
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    var full = '';
+    var buf = '';
+    var lastRun = 0;
+    while (true) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      var piece = decoder.decode(chunk.value, { stream: true });
+      full += piece;
+      buf += piece;
+      var parts = buf.split(/\r?\n/);
+      buf = parts.pop() || '';
+      parts.forEach(function (raw) {
+        var line = String(raw || '').replace(/<[^>]+>/g, '').trim();
+        if (!line || line.indexOf('__sr_ka__') >= 0) return;
+        var m = line.match(/^run\s+(\d+)\s*\/\s*(\d+)/i);
+        if (m) {
+          var run = parseInt(m[1], 10);
+          var total = parseInt(m[2], 10);
+          if (run !== lastRun) {
+            lastRun = run;
+            if (typeof onProgress === 'function') onProgress(run, total);
+          }
+          return;
+        }
+        var p = line.match(/^probing\s+(\d+)\s+runs?/i);
+        if (p && typeof onProgress === 'function') {
+          onProgress(0, parseInt(p[1], 10) || n);
+        }
+      });
+    }
+    if (buf) full += buf;
+    return full;
+  }
+
+  async function runDirect(tool, source, destination, n, progress) {
     var host = nodeKey(source) + '.local.mesh';
-    var text = await fetchNodeCgi(host, tool, destination, n, true);
+    var text;
     var doc;
-    try {
+    if (tool === 'stableroute') {
+      text = await fetchStablerouteStreaming(host, destination, n, function (run, total) {
+        if (progress && progress.updateRun) progress.updateRun(Math.max(1, run), total || n);
+      });
       doc = parseNodeTraceBody(tool, text, destination);
-    } catch (primaryErr) {
-      // Known stableroute builds can break format=json; retry plain text CGI.
-      text = await fetchNodeCgi(host, tool, destination, n, false);
+    } else {
+      text = await fetchNodeCgi(host, tool, destination, n, true);
       try {
         doc = parseNodeTraceBody(tool, text, destination);
-      } catch (fallbackErr) {
-        throw new Error(String(primaryErr.message || primaryErr) +
-          ' (text fallback: ' + String(fallbackErr.message || fallbackErr) + ')');
+      } catch (primaryErr) {
+        text = await fetchNodeCgi(host, tool, destination, n, false);
+        try {
+          doc = parseNodeTraceBody(tool, text, destination);
+        } catch (fallbackErr) {
+          throw new Error(String(primaryErr.message || primaryErr) +
+            ' (text fallback: ' + String(fallbackErr.message || fallbackErr) + ')');
+        }
       }
     }
     doc.source = nodeKey(source);
@@ -979,6 +1141,11 @@
           '<button type="button" class="meshmap-vtrace-run">Run via meshinfo</button>' +
           '<button type="button" class="meshmap-vtrace-direct" hidden>Run direct</button>' +
           '</div>' +
+          '<div class="meshmap-vtrace-progress" hidden>' +
+          '<div class="meshmap-vtrace-progress-label"></div>' +
+          '<div class="meshmap-vtrace-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">' +
+          '<div class="meshmap-vtrace-progress-bar"></div>' +
+          '</div></div>' +
           '<label class="meshmap-vtrace-check">' +
           '<input type="checkbox" class="meshmap-vtrace-hide-links"> Hide map links while tracing</label>' +
           '<label class="meshmap-vtrace-check">' +
@@ -1010,6 +1177,10 @@
         var directBtn = panel.querySelector('.meshmap-vtrace-direct');
         var hideLinksCb = panel.querySelector('.meshmap-vtrace-hide-links');
         var offsetPathsCb = panel.querySelector('.meshmap-vtrace-offset-paths');
+        var progressWrap = panel.querySelector('.meshmap-vtrace-progress');
+        var progressLabel = panel.querySelector('.meshmap-vtrace-progress-label');
+        var progressTrack = panel.querySelector('.meshmap-vtrace-progress-track');
+        var progressBar = panel.querySelector('.meshmap-vtrace-progress-bar');
         var pathsBox = panel.querySelector('.meshmap-vtrace-paths');
         var statusEl = panel.querySelector('.meshmap-vtrace-status');
         var list = panel.querySelector('#meshmap-vtrace-nodes');
@@ -1034,6 +1205,10 @@
         this._paths = pathsBox;
         this._runBtn = runBtn;
         this._directBtn = directBtn;
+        this._progress = progressWrap;
+        this._progressLabel = progressLabel;
+        this._progressTrack = progressTrack;
+        this._progressBar = progressBar;
         this._console = consoleEl;
         this._consoleBody = consoleBody;
         this._consoleToggle = consoleToggle;
@@ -1210,14 +1385,16 @@
             return;
           }
           setBusy(true);
-          setStatus(direct ? 'Running on node…' : 'Running via meshinfo…', { skipSave: true });
+          var progress = startProgress({ tool: tool, n: n, direct: direct });
           saveSession();
           try {
             var doc = direct
-              ? await runDirect(tool, source, destination, n)
+              ? await runDirect(tool, source, destination, n, progress)
               : await runViaMeshinfo(tool, source, destination, n);
+            stopProgress();
             applyDoc(doc);
           } catch (err) {
+            stopProgress();
             setStatus(String(err.message || err));
           } finally {
             setBusy(false);

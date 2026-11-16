@@ -143,6 +143,50 @@
 	min-height: 1.3em;
 }
 
+.meshmap-vtrace-progress {
+	margin: 8px 0 4px;
+}
+
+.meshmap-vtrace-progress[hidden] {
+	display: none !important;
+}
+
+.meshmap-vtrace-progress-label {
+	font-size: 11px;
+	color: #444;
+	margin-bottom: 4px;
+	line-height: 1.35;
+	word-break: break-word;
+}
+
+.meshmap-vtrace-progress-track {
+	height: 8px;
+	border-radius: 4px;
+	background: #e4e4e4;
+	overflow: hidden;
+	border: 1px solid #ccc;
+	box-sizing: border-box;
+}
+
+.meshmap-vtrace-progress-bar {
+	height: 100%;
+	width: 0%;
+	background: #2e7d32;
+	border-radius: 3px;
+	transition: width 0.25s ease-out;
+}
+
+.meshmap-vtrace-progress-indeterminate .meshmap-vtrace-progress-bar {
+	width: 40% !important;
+	animation: meshmap-vtrace-progress-slide 1.2s ease-in-out infinite;
+	transition: none;
+}
+
+@keyframes meshmap-vtrace-progress-slide {
+	0% { transform: translateX(-120%); }
+	100% { transform: translateX(280%); }
+}
+
 .meshmap-vtrace-check {
 	display: flex;
 	align-items: center;
