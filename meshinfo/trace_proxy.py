@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import re
+import socket
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote, urlencode
@@ -27,6 +28,42 @@ TRACE_CFG_KEY = web.AppKey('trace_cfg', dict)
 TRACE_SEM_KEY = web.AppKey('trace_sem', asyncio.Semaphore)
 DATA_DIR_KEY = web.AppKey('data_dir', Path)
 SAFE_NAME_RE = re.compile(r'^[0-9a-zA-Z.\-]+$')
+LOCALNODE_ALIASES = frozenset({'localnode', 'localnode.local.mesh'})
+
+
+def is_private_ipv4(ip: str) -> bool:
+    if not re.match(r'^\d{1,3}(?:\.\d{1,3}){3}$', ip):
+        return False
+    a, b, _, _ = (int(p) for p in ip.split('.'))
+    if a == 10:
+        return True
+    if a == 172 and 16 <= b <= 31:
+        return True
+    if a == 192 and b == 168:
+        return True
+    # AREDN dtunnels / CGNAT-ish mesh ranges sometimes used on tunnels
+    if a == 100 and 64 <= b <= 127:
+        return True
+    return False
+
+
+def dns_resolve_ipv4(hostname: str) -> Optional[str]:
+    try:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM)
+    except socket.gaierror:
+        return None
+    for info in infos:
+        ip = info[4][0]
+        if is_private_ipv4(ip):
+            return ip
+    return None
+
+
+def is_localnode_alias(name: str) -> bool:
+    raw = (name or '').strip().lower()
+    if raw in LOCALNODE_ALIASES:
+        return True
+    return node_key(raw) == 'localnode'
 
 
 def load_node_index(data_dir: Path) -> Dict[str, str]:
@@ -46,10 +83,12 @@ def load_node_index(data_dir: Path) -> Dict[str, str]:
             index[key] = ip
             index[f'{key}.local.mesh'] = ip
 
+    map_info_localnode: Optional[str] = None
     map_path = snap / 'map_data.json'
     if map_path.exists():
         try:
             data = json.loads(map_path.read_text(encoding='utf-8'))
+            map_info_localnode = ((data or {}).get('mapInfo') or {}).get('localnode')
             devices = (data or {}).get('allDevices') or {}
             if isinstance(devices, dict):
                 for band_nodes in devices.values():
@@ -81,6 +120,29 @@ def load_node_index(data_dir: Path) -> Dict[str, str]:
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning('failed to index nodes.json: %s', exc)
 
+    # mapInfo.localnode is often "localnode.local.mesh" and is not a device row.
+    # Resolve it on the meshinfo host so Source=localnode works for live traces.
+    for alias in (map_info_localnode, 'localnode', 'localnode.local.mesh'):
+        if not alias or not is_localnode_alias(str(alias)):
+            continue
+        host = str(alias).strip()
+        if '.' not in host:
+            host = 'localnode.local.mesh'
+        ip = dns_resolve_ipv4(host)
+        if not ip:
+            continue
+        # Prefer an already-indexed IP if DNS matched a known node address.
+        if ip in index:
+            resolved = index[ip]
+        else:
+            resolved = ip
+        for name in ('localnode', 'localnode.local.mesh', str(alias).strip()):
+            key = node_key(name) or name.lower()
+            index[key] = resolved
+            index[f'{key}.local.mesh'] = resolved
+            index[name.lower()] = resolved
+        break
+
     return index
 
 
@@ -96,6 +158,12 @@ def resolve_source_ip(index: Dict[str, str], source: str) -> Optional[str]:
     dotted = f'{key}.local.mesh'
     if dotted in index:
         return index[dotted]
+    # Last chance: DNS for the special localnode alias only (SSRF-safe: private IP).
+    if is_localnode_alias(raw):
+        host = raw if '.' in raw else 'localnode.local.mesh'
+        ip = dns_resolve_ipv4(host)
+        if ip:
+            return index.get(ip, ip)
     return None
 
 
@@ -132,9 +200,15 @@ async def fetch_node_trace(
         ctype = (resp.headers.get('Content-Type') or '').lower()
         text = body.decode('utf-8', errors='replace')
         if resp.status >= 400:
+            detail = f'node CGI returned HTTP {resp.status}'
+            if resp.status == 404:
+                detail = (
+                    f'{tool} CGI not found on source node (HTTP 404). '
+                    f'Install the {tool} package on that node, or pick a different Source.'
+                )
             raise web.HTTPBadGateway(
                 text=json.dumps({
-                    'error': f'node CGI returned HTTP {resp.status}',
+                    'error': detail,
                     'body': text[:500],
                 }),
                 content_type='application/json',
@@ -148,6 +222,15 @@ async def fetch_node_trace(
         if via == 'json' and tool == 'stableroute' and not (doc.get('paths') or []):
             raise RuntimeError('stableroute JSON had no paths')
         return doc, via
+
+
+def _should_fallback_to_text(exc: BaseException, url: str) -> bool:
+    """Retry text CGI only for empty/broken JSON — not HTTP errors from the node."""
+    if 'format=json' not in url:
+        return False
+    if isinstance(exc, web.HTTPException):
+        return False
+    return True
 
 
 async def handle_trace(request: web.Request) -> web.Response:
@@ -216,7 +299,7 @@ async def handle_trace(request: web.Request) -> web.Response:
                 doc, via = await fetch_node_trace(session, url, tool, destination)
             except Exception as primary_exc:
                 # Fall back to text CGI when JSON is empty/broken (known stableroute CGI issue).
-                if 'format=json' in url:
+                if _should_fallback_to_text(primary_exc, url):
                     text_url = build_node_url(
                         tool, source_ip, destination, n, legacy, want_json=False,
                     )
@@ -235,11 +318,21 @@ async def handle_trace(request: web.Request) -> web.Response:
     finally:
         sem.release()
 
-    if isinstance(doc, dict):
-        doc['source'] = node_key(source)
-        doc['proxy'] = {
-            'sourceIp': source_ip,
-            'via': via,
-            'tool': tool,
-        }
+    if not isinstance(doc, dict) or not (doc.get('paths') or []):
+        return web.json_response(
+            {
+                'error': (
+                    f'{tool} returned no paths from {source} ({source_ip}). '
+                    'Check destination name, package version, and that the source can reach the dest.'
+                ),
+            },
+            status=502,
+        )
+
+    doc['source'] = node_key(source)
+    doc['proxy'] = {
+        'sourceIp': source_ip,
+        'via': via,
+        'tool': tool,
+    }
     return web.json_response(doc, dumps=lambda o: json.dumps(o, indent=2))

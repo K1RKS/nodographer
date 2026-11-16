@@ -197,6 +197,14 @@
 	font-size: 12px;
 }
 
+.meshmap-vtrace-console-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 0 auto;
+}
+
+.meshmap-vtrace-console-copy,
 .meshmap-vtrace-console-toggle {
 	flex: 0 0 auto;
 	padding: 3px 8px;
@@ -205,6 +213,11 @@
 	background: #fff;
 	cursor: pointer;
 	font-size: 11px;
+}
+
+.meshmap-vtrace-console-copy:hover,
+.meshmap-vtrace-console-toggle:hover {
+	background: #ebebeb;
 }
 
 .meshmap-vtrace-console-body {

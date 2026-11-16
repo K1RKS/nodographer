@@ -16,6 +16,7 @@
   'use strict';
 
   var LAYER_NAME = 'Visual Traceroute';
+  var SESSION_KEY = 'visualTrace';
   var PATH_COLORS = [
     '#e41a1c', '#377eb8', '#4daf4a', '#984ea3',
     '#ff7f00', '#a65628', '#f781bf', '#1b9e77'
@@ -35,6 +36,7 @@
   var nodeNames = [];
   var control = null;
   var syncingLayer = false;
+  var restoringSession = false;
   var state = {
     doc: null,
     rawText: '',
@@ -42,8 +44,39 @@
     status: '',
     busy: false,
     hideLinks: true,
-    consoleMinimized: false
+    offsetPaths: true,
+    consoleMinimized: false,
+    panelOpen: false
   };
+
+  function saveSession() {
+    if (restoringSession || !window.MeshmapSession) return;
+    var patch = {};
+    var form = control && control._form ? control._form : {};
+    patch[SESSION_KEY] = {
+      tool: form.toolSel ? form.toolSel.value : 'traceroute',
+      source: form.sourceIn ? form.sourceIn.value : '',
+      destination: form.destIn ? form.destIn.value : '',
+      n: form.nIn ? (parseInt(form.nIn.value, 10) || 10) : 10,
+      paste: form.paste ? form.paste.value : '',
+      hideLinks: !!state.hideLinks,
+      offsetPaths: !!state.offsetPaths,
+      consoleMinimized: !!state.consoleMinimized,
+      panelOpen: !!state.panelOpen,
+      selected: state.selected,
+      status: state.status || '',
+      rawText: state.rawText || '',
+      doc: state.doc || null
+    };
+    MeshmapSession.write(patch);
+  }
+
+  function readSavedSession() {
+    if (!window.MeshmapSession) return null;
+    var s = MeshmapSession.read();
+    var v = s && s[SESSION_KEY];
+    return v && typeof v === 'object' ? v : null;
+  }
 
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -304,15 +337,23 @@
     }
     if (text.charAt(0) === '{') {
       var doc = JSON.parse(text);
-      if (!doc || !doc.paths) {
-        throw new Error('JSON is missing paths[]');
+      if (!doc || !Array.isArray(doc.paths) || !doc.paths.length) {
+        throw new Error('JSON has no paths[]');
       }
       return doc;
     }
     if (/^stableroute\(/i.test(text) || /Path\s+1:/i.test(text)) {
-      return parseStablerouteText(text);
+      var stableDoc = parseStablerouteText(text);
+      if (!stableDoc.paths || !stableDoc.paths.length) {
+        throw new Error('stableroute report has no paths');
+      }
+      return stableDoc;
     }
-    return parseTracerouteText(text);
+    var trDoc = parseTracerouteText(text);
+    if (!trDoc.paths || !trDoc.paths.length) {
+      throw new Error('traceroute report has no hops');
+    }
+    return trDoc;
   }
 
   function resolveHopLatLon(hop) {
@@ -362,22 +403,88 @@
     traceLayer.clearLayers();
   }
 
+  /** Visible paths in draw order (respects path filter). */
+  function visiblePaths(doc) {
+    var paths = (doc && doc.paths) || [];
+    var selected = state.selected;
+    return paths.filter(function (path) {
+      return selected === 'all' || Number(selected) === Number(path.index);
+    });
+  }
+
+  /**
+   * Lateral pixel offset for a path when several traces share geography.
+   * Centered around 0 so 3 paths sit at -spacing, 0, +spacing.
+   */
+  function pathOffsetPx(path, visible) {
+    if (!state.offsetPaths || !visible || visible.length < 2) return 0;
+    var idx = -1;
+    for (var i = 0; i < visible.length; i++) {
+      if (Number(visible[i].index) === Number(path.index)) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) return 0;
+    var spacing = 8;
+    return (idx - (visible.length - 1) / 2) * spacing;
+  }
+
+  function perpUnit(p1, p2) {
+    var dx = p2.x - p1.x;
+    var dy = p2.y - p1.y;
+    var len = Math.sqrt(dx * dx + dy * dy) || 1;
+    // Left-hand normal relative to travel direction.
+    return { x: -dy / len, y: dx / len };
+  }
+
+  /**
+   * Shift a lat/lon polyline sideways in screen space so overlapping
+   * multipath colors sit next to each other instead of stacking.
+   */
+  function offsetPolyline(coords, offsetPx) {
+    if (!map || !offsetPx || !coords || coords.length < 2) return coords;
+    var pts = coords.map(function (c) {
+      return map.latLngToLayerPoint(L.latLng(c[0], c[1]));
+    });
+    var out = [];
+    for (var i = 0; i < pts.length; i++) {
+      var n1 = i > 0 ? perpUnit(pts[i - 1], pts[i]) : null;
+      var n2 = i < pts.length - 1 ? perpUnit(pts[i], pts[i + 1]) : null;
+      var nx = 0;
+      var ny = 0;
+      if (n1 && n2) {
+        nx = n1.x + n2.x;
+        ny = n1.y + n2.y;
+      } else if (n1) {
+        nx = n1.x;
+        ny = n1.y;
+      } else if (n2) {
+        nx = n2.x;
+        ny = n2.y;
+      }
+      var nlen = Math.sqrt(nx * nx + ny * ny) || 1;
+      nx = (nx / nlen) * offsetPx;
+      ny = (ny / nlen) * offsetPx;
+      var ll = map.layerPointToLatLng(L.point(pts[i].x + nx, pts[i].y + ny));
+      out.push([ll.lat, ll.lng]);
+    }
+    return out;
+  }
+
   function drawDoc() {
     clearDraw();
     var unresolved = [];
     var doc = state.doc;
     if (!doc || !doc.paths || !doc.paths.length) {
-      setStatus(state.status || 'No paths to draw');
+      setStatus(state.status || 'No paths to draw', { skipSave: true });
       renderPathControls();
       return;
     }
-    var paths = doc.paths;
-    var selected = state.selected;
+    var paths = visiblePaths(doc);
     paths.forEach(function (path) {
-      if (selected !== 'all' && Number(selected) !== Number(path.index)) {
-        return;
-      }
       var color = pathColor(path.index);
+      var offsetPx = pathOffsetPx(path, paths);
       // Build ordered vertices: known lat/lon or null for gaps (unknown hops).
       var vertices = [];
       var src = sourceLatLon(doc);
@@ -403,7 +510,7 @@
         circle.bindPopup(hopPopupHtml(hop, path.index));
         traceLayer.addLayer(circle);
       });
-      drawPathSegments(vertices, color, path);
+      drawPathSegments(vertices, color, path, offsetPx);
     });
     var msg = (doc.tool || 'trace') + ': ' + (doc.paths.length) + ' path(s)';
     if (doc.destination) msg += ' → ' + doc.destination;
@@ -411,7 +518,7 @@
       msg += ' · unresolved: ' + unresolved.slice(0, 6).join(', ') +
         (unresolved.length > 6 ? '…' : '');
     }
-    setStatus(msg);
+    setStatus(msg, { skipSave: true });
     renderPathControls();
   }
 
@@ -419,14 +526,14 @@
    * Draw solid segments between consecutive known hops; when unknowns sit
    * between two known hops, draw a dotted chord so the path still looks complete.
    */
-  function drawPathSegments(vertices, color, path) {
+  function drawPathSegments(vertices, color, path, offsetPx) {
     var solid = [];
     var lastKnown = null;
     var pendingGap = false;
 
     function flushSolid() {
       if (solid.length >= 2) {
-        addPathLine(solid, color, path, false);
+        addPathLine(solid, color, path, false, offsetPx);
       }
       solid = [];
     }
@@ -439,7 +546,7 @@
       }
       var pt = [v.lat, v.lon];
       if (pendingGap && lastKnown) {
-        addPathLine([lastKnown, pt], color, path, true);
+        addPathLine([lastKnown, pt], color, path, true, offsetPx);
         pendingGap = false;
       }
       solid.push(pt);
@@ -448,8 +555,9 @@
     flushSolid();
   }
 
-  function addPathLine(coords, color, path, dotted) {
+  function addPathLine(coords, color, path, dotted, offsetPx) {
     if (!coords || coords.length < 2) return;
+    var drawn = offsetPolyline(coords, offsetPx || 0);
     var opts = {
       color: color,
       weight: dotted ? 4 : 5,
@@ -460,7 +568,7 @@
     if (dotted) {
       opts.dashArray = '2, 10';
     }
-    var line = L.polyline(coords, opts);
+    var line = L.polyline(drawn, opts);
     var label = 'Path ' + path.index;
     if (path.count != null && state.doc && state.doc.runs) {
       label += ' (' + path.count + '/' + state.doc.runs + ')';
@@ -472,11 +580,13 @@
     traceLayer.addLayer(line);
   }
 
-  function setStatus(msg) {
+  function setStatus(msg, opts) {
+    opts = opts || {};
     state.status = msg || '';
     if (control && control._status) {
       control._status.textContent = state.status;
     }
+    if (!opts.skipSave) saveSession();
   }
 
   function ensureLayerOn() {
@@ -646,19 +756,26 @@
     }
   }
 
-  function applyDoc(doc, rawText) {
+  function applyDoc(doc, rawText, opts) {
+    opts = opts || {};
     state.doc = doc;
     if (rawText != null && String(rawText).trim()) {
       state.rawText = String(rawText);
     } else {
       state.rawText = formatDocAsText(doc);
     }
-    state.selected = 'all';
-    state.consoleMinimized = false;
+    if (!opts.keepSelected) {
+      state.selected = 'all';
+    }
+    if (!opts.keepConsole) {
+      state.consoleMinimized = false;
+    }
     ensureLayerOn();
     applyHideLinks();
     drawDoc();
     updateConsole();
+    renderPathControls();
+    if (!opts.skipSave) saveSession();
   }
 
   function renderPathControls() {
@@ -680,6 +797,7 @@
     allRadio.addEventListener('change', function () {
       state.selected = 'all';
       drawDoc();
+      saveSession();
     });
     allLabel.appendChild(allRadio);
     allLabel.appendChild(document.createTextNode(' All paths'));
@@ -696,6 +814,7 @@
       radio.addEventListener('change', function () {
         state.selected = path.index;
         drawDoc();
+        saveSession();
       });
       var swatch = document.createElement('span');
       swatch.className = 'meshmap-vtrace-swatch';
@@ -747,8 +866,8 @@
       var errMsg = (payload && payload.error) || ('HTTP ' + resp.status);
       throw new Error(errMsg);
     }
-    if (!payload || !payload.paths) {
-      throw new Error('meshinfo returned no paths');
+    if (!payload || !Array.isArray(payload.paths) || !payload.paths.length) {
+      throw new Error((payload && payload.error) || 'meshinfo returned no paths');
     }
     return payload;
   }
@@ -772,6 +891,9 @@
       doc = parseStablerouteText(text);
     } else {
       doc = parseTracerouteText(text);
+    }
+    if (!doc || !Array.isArray(doc.paths) || !doc.paths.length) {
+      throw new Error(tool + ' returned no paths');
     }
     doc.source = nodeKey(source);
     return doc;
@@ -818,6 +940,8 @@
           '</div>' +
           '<label class="meshmap-vtrace-check">' +
           '<input type="checkbox" class="meshmap-vtrace-hide-links"> Hide map links while tracing</label>' +
+          '<label class="meshmap-vtrace-check">' +
+          '<input type="checkbox" class="meshmap-vtrace-offset-paths"> Offset overlapping paths</label>' +
           '<div class="meshmap-vtrace-subheader">Paths</div>' +
           '<div class="meshmap-vtrace-paths"></div>' +
           '<div class="meshmap-vtrace-status"></div>';
@@ -826,7 +950,10 @@
         consoleEl.innerHTML =
           '<div class="meshmap-vtrace-console-bar">' +
           '<span class="meshmap-vtrace-console-title">Trace report</span>' +
+          '<span class="meshmap-vtrace-console-actions">' +
+          '<button type="button" class="meshmap-vtrace-console-copy">Copy</button>' +
           '<button type="button" class="meshmap-vtrace-console-toggle" aria-expanded="true">Minimize</button>' +
+          '</span>' +
           '</div>' +
           '<pre class="meshmap-vtrace-console-body">(no report loaded)</pre>';
 
@@ -841,10 +968,12 @@
         var runBtn = panel.querySelector('.meshmap-vtrace-run');
         var directBtn = panel.querySelector('.meshmap-vtrace-direct');
         var hideLinksCb = panel.querySelector('.meshmap-vtrace-hide-links');
+        var offsetPathsCb = panel.querySelector('.meshmap-vtrace-offset-paths');
         var pathsBox = panel.querySelector('.meshmap-vtrace-paths');
         var statusEl = panel.querySelector('.meshmap-vtrace-status');
         var list = panel.querySelector('#meshmap-vtrace-nodes');
         var consoleToggle = consoleEl.querySelector('.meshmap-vtrace-console-toggle');
+        var consoleCopy = consoleEl.querySelector('.meshmap-vtrace-console-copy');
         var consoleBody = consoleEl.querySelector('.meshmap-vtrace-console-body');
 
         nodeNames.forEach(function (name) {
@@ -867,14 +996,26 @@
         this._console = consoleEl;
         this._consoleBody = consoleBody;
         this._consoleToggle = consoleToggle;
+        this._togglePanel = function (open, opts) { togglePanel(open, opts); };
+        this._form = {
+          paste: paste,
+          toolSel: toolSel,
+          sourceIn: sourceIn,
+          destIn: destIn,
+          nIn: nIn,
+          nWrap: nWrap,
+          hideLinksCb: hideLinksCb,
+          offsetPathsCb: offsetPathsCb
+        };
 
         function syncRunsVisibility() {
           nWrap.hidden = toolSel.value !== 'stableroute';
         }
         syncRunsVisibility();
-        toolSel.addEventListener('change', syncRunsVisibility);
 
-        function togglePanel(open) {
+        function togglePanel(open, opts) {
+          opts = opts || {};
+          state.panelOpen = !!open;
           if (open) {
             L.DomUtil.addClass(root, 'meshmap-vtrace-expanded');
             L.DomUtil.addClass(panel, 'meshmap-vtrace-panel-open');
@@ -882,6 +1023,7 @@
             L.DomUtil.removeClass(root, 'meshmap-vtrace-expanded');
             L.DomUtil.removeClass(panel, 'meshmap-vtrace-panel-open');
           }
+          if (!opts.skipSave) saveSession();
         }
 
         L.DomEvent.disableClickPropagation(root);
@@ -901,11 +1043,97 @@
         hideLinksCb.addEventListener('change', function () {
           state.hideLinks = !!hideLinksCb.checked;
           applyHideLinks();
+          saveSession();
+        });
+
+        offsetPathsCb.checked = !!state.offsetPaths;
+        offsetPathsCb.addEventListener('change', function () {
+          state.offsetPaths = !!offsetPathsCb.checked;
+          if (state.doc) drawDoc();
+          saveSession();
         });
 
         consoleToggle.addEventListener('click', function () {
           state.consoleMinimized = !state.consoleMinimized;
           updateConsole();
+          saveSession();
+        });
+
+        function persistFormFields() {
+          saveSession();
+        }
+        toolSel.addEventListener('change', function () {
+          syncRunsVisibility();
+          persistFormFields();
+        });
+        sourceIn.addEventListener('change', persistFormFields);
+        sourceIn.addEventListener('blur', persistFormFields);
+        destIn.addEventListener('change', persistFormFields);
+        destIn.addEventListener('blur', persistFormFields);
+        nIn.addEventListener('change', persistFormFields);
+        paste.addEventListener('blur', persistFormFields);
+
+        function reportTextForCopy() {
+          return (consoleBody && consoleBody.textContent) ||
+            state.rawText ||
+            formatDocAsText(state.doc) ||
+            '';
+        }
+
+        function setCopyLabel(label) {
+          if (consoleCopy) consoleCopy.textContent = label;
+        }
+
+        consoleCopy.addEventListener('click', function () {
+          var text = reportTextForCopy();
+          if (!text || text === '(no report loaded)') {
+            setStatus('Nothing to copy');
+            return;
+          }
+          function ok() {
+            setCopyLabel('Copied');
+            setTimeout(function () { setCopyLabel('Copy'); }, 1500);
+          }
+          function fail() {
+            setStatus('Copy failed');
+            setCopyLabel('Copy');
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(ok).catch(function () {
+              // Fallback for non-secure contexts
+              try {
+                var ta = document.createElement('textarea');
+                ta.value = text;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                var copied = document.execCommand('copy');
+                document.body.removeChild(ta);
+                if (copied) ok();
+                else fail();
+              } catch (err) {
+                fail();
+              }
+            });
+          } else {
+            try {
+              var ta2 = document.createElement('textarea');
+              ta2.value = text;
+              ta2.setAttribute('readonly', '');
+              ta2.style.position = 'fixed';
+              ta2.style.left = '-9999px';
+              document.body.appendChild(ta2);
+              ta2.select();
+              var copied2 = document.execCommand('copy');
+              document.body.removeChild(ta2);
+              if (copied2) ok();
+              else fail();
+            } catch (err2) {
+              fail();
+            }
+          }
         });
 
         parseBtn.addEventListener('click', function () {
@@ -924,10 +1152,11 @@
           state.selected = 'all';
           clearDraw();
           paste.value = '';
-          setStatus('Cleared');
+          setStatus('Cleared', { skipSave: true });
           renderPathControls();
           updateConsole();
           applyHideLinks();
+          saveSession();
         });
 
         async function doRun(direct) {
@@ -940,7 +1169,8 @@
             return;
           }
           setBusy(true);
-          setStatus(direct ? 'Running on node…' : 'Running via meshinfo…');
+          setStatus(direct ? 'Running on node…' : 'Running via meshinfo…', { skipSave: true });
+          saveSession();
           try {
             var doc = direct
               ? await runDirect(tool, source, destination, n)
@@ -962,14 +1192,91 @@
     return new Ctrl();
   }
 
+  function restoreSession() {
+    var saved = readSavedSession();
+    if (!saved || !control || !control._form) return;
+
+    restoringSession = true;
+    try {
+      var form = control._form;
+      if (saved.tool && form.toolSel) {
+        form.toolSel.value = saved.tool;
+      }
+      if (form.nWrap) {
+        form.nWrap.hidden = form.toolSel.value !== 'stableroute';
+      }
+      if (typeof saved.source === 'string' && form.sourceIn) {
+        form.sourceIn.value = saved.source;
+      }
+      if (typeof saved.destination === 'string' && form.destIn) {
+        form.destIn.value = saved.destination;
+      }
+      if (saved.n != null && form.nIn) {
+        form.nIn.value = String(saved.n);
+      }
+      if (typeof saved.paste === 'string' && form.paste) {
+        form.paste.value = saved.paste;
+      }
+      if (typeof saved.hideLinks === 'boolean') {
+        state.hideLinks = saved.hideLinks;
+        if (form.hideLinksCb) form.hideLinksCb.checked = state.hideLinks;
+      }
+      if (typeof saved.offsetPaths === 'boolean') {
+        state.offsetPaths = saved.offsetPaths;
+        if (form.offsetPathsCb) form.offsetPathsCb.checked = state.offsetPaths;
+      }
+      if (typeof saved.consoleMinimized === 'boolean') {
+        state.consoleMinimized = saved.consoleMinimized;
+      }
+      if (saved.selected != null) {
+        state.selected = saved.selected;
+      }
+      if (typeof saved.status === 'string') {
+        setStatus(saved.status, { skipSave: true });
+      }
+
+      var hasDoc = saved.doc && Array.isArray(saved.doc.paths) && saved.doc.paths.length;
+      if (hasDoc) {
+        applyDoc(saved.doc, saved.rawText || null, {
+          keepSelected: true,
+          keepConsole: true,
+          skipSave: true
+        });
+      } else {
+        state.doc = null;
+        state.rawText = saved.rawText || '';
+        renderPathControls();
+        updateConsole();
+        applyHideLinks();
+      }
+
+      if (saved.panelOpen && typeof control._togglePanel === 'function') {
+        control._togglePanel(true, { skipSave: true });
+        ensureLayerOn();
+      }
+    } finally {
+      restoringSession = false;
+    }
+  }
+
+  function onZoomOrMoveEnd() {
+    // Pixel-space parallel offsets must be recomputed after zoom.
+    if (state.offsetPaths && state.doc && state.doc.paths && state.doc.paths.length > 1 &&
+        state.selected === 'all' && map && map.hasLayer(traceLayer)) {
+      drawDoc();
+    }
+  }
+
   function onOverlayAdd(e) {
     if (syncingLayer) return;
     if (e.name === LAYER_NAME || e.layer === traceLayer) {
       if (state.doc) drawDoc();
+      state.panelOpen = true;
       if (control && control._panel) {
         L.DomUtil.addClass(control._container, 'meshmap-vtrace-expanded');
         L.DomUtil.addClass(control._panel, 'meshmap-vtrace-panel-open');
       }
+      saveSession();
     }
   }
 
@@ -978,10 +1285,12 @@
     if (e.name === LAYER_NAME || e.layer === traceLayer) {
       clearDraw();
       setMapLinksVisible(true);
+      state.panelOpen = false;
       if (control && control._panel) {
         L.DomUtil.removeClass(control._container, 'meshmap-vtrace-expanded');
         L.DomUtil.removeClass(control._panel, 'meshmap-vtrace-panel-open');
       }
+      saveSession();
     }
   }
 
@@ -999,8 +1308,18 @@
     }
     control = buildControl();
     control.addTo(map);
+    map.off('overlayadd', onOverlayAdd);
+    map.off('overlayremove', onOverlayRemove);
+    map.off('zoomend', onZoomOrMoveEnd);
     map.on('overlayadd', onOverlayAdd);
     map.on('overlayremove', onOverlayRemove);
+    map.on('zoomend', onZoomOrMoveEnd);
+    restoreSession();
+    if (!readSavedSession() && mapInfo && mapInfo.localnode && control._form && control._form.sourceIn) {
+      if (!control._form.sourceIn.value) {
+        control._form.sourceIn.value = mapInfo.localnode;
+      }
+    }
     renderPathControls();
     updateConsole();
   }
