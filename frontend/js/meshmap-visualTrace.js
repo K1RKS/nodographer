@@ -872,9 +872,42 @@
     return payload;
   }
 
-  async function runDirect(tool, source, destination, n) {
-    var host = nodeKey(source) + '.local.mesh';
-    var qs = 'server=' + encodeURIComponent(destination) + '&format=json';
+  function stripHtmlPre(text) {
+    var s = String(text || '');
+    var m = s.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+    if (m) s = m[1];
+    return s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>').replace(/&#x26;/g, '&').replace(/&nbsp;/g, ' ');
+  }
+
+  function parseNodeTraceBody(tool, text, destination) {
+    var body = stripHtmlPre(text).trim();
+    if (!body) {
+      throw new Error(tool + ' returned empty body');
+    }
+    var doc;
+    if (body.charAt(0) === '{') {
+      doc = JSON.parse(body);
+    } else if (tool === 'stableroute') {
+      doc = parseStablerouteText(body);
+      if (destination && !doc.destination) {
+        doc.destination = nodeKey(destination);
+      }
+    } else {
+      doc = parseTracerouteText(body);
+      if (destination && !doc.destination) {
+        doc.destination = nodeKey(destination);
+      }
+    }
+    if (!doc || !Array.isArray(doc.paths) || !doc.paths.length) {
+      throw new Error(tool + ' returned no paths');
+    }
+    return doc;
+  }
+
+  async function fetchNodeCgi(host, tool, destination, n, wantJson) {
+    var qs = 'server=' + encodeURIComponent(destination);
+    if (wantJson) qs += '&format=json';
     if (tool === 'stableroute') {
       qs += '&n=' + encodeURIComponent(String(n || 10));
     }
@@ -884,16 +917,24 @@
     if (!resp.ok) {
       throw new Error('node CGI HTTP ' + resp.status);
     }
+    return text;
+  }
+
+  async function runDirect(tool, source, destination, n) {
+    var host = nodeKey(source) + '.local.mesh';
+    var text = await fetchNodeCgi(host, tool, destination, n, true);
     var doc;
-    if (text.trim().charAt(0) === '{') {
-      doc = JSON.parse(text);
-    } else if (tool === 'stableroute') {
-      doc = parseStablerouteText(text);
-    } else {
-      doc = parseTracerouteText(text);
-    }
-    if (!doc || !Array.isArray(doc.paths) || !doc.paths.length) {
-      throw new Error(tool + ' returned no paths');
+    try {
+      doc = parseNodeTraceBody(tool, text, destination);
+    } catch (primaryErr) {
+      // Known stableroute builds can break format=json; retry plain text CGI.
+      text = await fetchNodeCgi(host, tool, destination, n, false);
+      try {
+        doc = parseNodeTraceBody(tool, text, destination);
+      } catch (fallbackErr) {
+        throw new Error(String(primaryErr.message || primaryErr) +
+          ' (text fallback: ' + String(fallbackErr.message || fallbackErr) + ')');
+      }
     }
     doc.source = nodeKey(source);
     return doc;
