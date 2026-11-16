@@ -99,8 +99,18 @@ def resolve_source_ip(index: Dict[str, str], source: str) -> Optional[str]:
     return None
 
 
-def build_node_url(tool: str, source_ip: str, destination: str, n: int, legacy: bool) -> str:
-    qs = {'server': destination, 'format': 'json'}
+def build_node_url(
+    tool: str,
+    source_ip: str,
+    destination: str,
+    n: int,
+    legacy: bool,
+    *,
+    want_json: bool = True,
+) -> str:
+    qs: Dict[str, str] = {'server': destination}
+    if want_json:
+        qs['format'] = 'json'
     if tool == 'stableroute':
         qs['n'] = str(n)
         if legacy:
@@ -129,8 +139,14 @@ async def fetch_node_trace(
                 }),
                 content_type='application/json',
             )
+        # Some stableroute builds returned Content-Type JSON with an empty body.
+        if not text.strip():
+            raise RuntimeError('node CGI returned empty body')
         via = 'json' if ('json' in ctype or text.lstrip().startswith('{')) else 'text'
         doc = coerce_trace_document(text, tool, destination)
+        # Empty JSON path lists are not useful — caller may retry text CGI.
+        if via == 'json' and tool == 'stableroute' and not (doc.get('paths') or []):
+            raise RuntimeError('stableroute JSON had no paths')
         return doc, via
 
 
@@ -196,7 +212,19 @@ async def handle_trace(request: web.Request) -> web.Response:
     try:
         timeout = ClientTimeout(total=timeout_sec, sock_connect=15, sock_read=timeout_sec)
         async with ClientSession(timeout=timeout) as session:
-            doc, via = await fetch_node_trace(session, url, tool, destination)
+            try:
+                doc, via = await fetch_node_trace(session, url, tool, destination)
+            except Exception as primary_exc:
+                # Fall back to text CGI when JSON is empty/broken (known stableroute CGI issue).
+                if 'format=json' in url:
+                    text_url = build_node_url(
+                        tool, source_ip, destination, n, legacy, want_json=False,
+                    )
+                    logger.info('trace proxy JSON failed (%s); retrying text CGI', primary_exc)
+                    doc, via = await fetch_node_trace(session, text_url, tool, destination)
+                    via = f'text-fallback:{via}'
+                else:
+                    raise
     except asyncio.TimeoutError:
         return web.json_response({'error': 'timed out waiting for node CGI'}, status=504)
     except web.HTTPException:

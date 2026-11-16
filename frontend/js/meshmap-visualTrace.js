@@ -37,9 +37,12 @@
   var syncingLayer = false;
   var state = {
     doc: null,
+    rawText: '',
     selected: 'all', // 'all' | path index number
     status: '',
-    busy: false
+    busy: false,
+    hideLinks: true,
+    consoleMinimized: false
   };
 
   function escapeHtml(s) {
@@ -375,22 +378,20 @@
         return;
       }
       var color = pathColor(path.index);
-      var coords = [];
+      // Build ordered vertices: known lat/lon or null for gaps (unknown hops).
+      var vertices = [];
       var src = sourceLatLon(doc);
       if (src) {
-        coords.push([src.lat, src.lon]);
+        vertices.push({ lat: src.lat, lon: src.lon, hop: null, known: true });
       }
       (path.hops || []).forEach(function (hop) {
         var pos = resolveHopLatLon(hop);
         if (!pos) {
           unresolved.push((hop.hostname || hop.ip || '*') + ' (path ' + path.index + ')');
-          if (coords.length) {
-            flushPolyline(coords, color, path);
-            coords = [];
-          }
+          vertices.push({ lat: null, lon: null, hop: hop, known: false });
           return;
         }
-        coords.push([pos.lat, pos.lon]);
+        vertices.push({ lat: pos.lat, lon: pos.lon, hop: hop, known: true });
         var circle = L.circleMarker([pos.lat, pos.lon], {
           radius: 6,
           color: color,
@@ -402,7 +403,7 @@
         circle.bindPopup(hopPopupHtml(hop, path.index));
         traceLayer.addLayer(circle);
       });
-      flushPolyline(coords, color, path);
+      drawPathSegments(vertices, color, path);
     });
     var msg = (doc.tool || 'trace') + ': ' + (doc.paths.length) + ' path(s)';
     if (doc.destination) msg += ' → ' + doc.destination;
@@ -414,18 +415,58 @@
     renderPathControls();
   }
 
-  function flushPolyline(coords, color, path) {
+  /**
+   * Draw solid segments between consecutive known hops; when unknowns sit
+   * between two known hops, draw a dotted chord so the path still looks complete.
+   */
+  function drawPathSegments(vertices, color, path) {
+    var solid = [];
+    var lastKnown = null;
+    var pendingGap = false;
+
+    function flushSolid() {
+      if (solid.length >= 2) {
+        addPathLine(solid, color, path, false);
+      }
+      solid = [];
+    }
+
+    vertices.forEach(function (v) {
+      if (!v.known) {
+        pendingGap = true;
+        flushSolid();
+        return;
+      }
+      var pt = [v.lat, v.lon];
+      if (pendingGap && lastKnown) {
+        addPathLine([lastKnown, pt], color, path, true);
+        pendingGap = false;
+      }
+      solid.push(pt);
+      lastKnown = pt;
+    });
+    flushSolid();
+  }
+
+  function addPathLine(coords, color, path, dotted) {
     if (!coords || coords.length < 2) return;
-    var line = L.polyline(coords, {
+    var opts = {
       color: color,
-      weight: 5,
-      opacity: 0.9,
+      weight: dotted ? 4 : 5,
+      opacity: dotted ? 0.75 : 0.9,
       lineJoin: 'round',
       interactive: true
-    });
+    };
+    if (dotted) {
+      opts.dashArray = '2, 10';
+    }
+    var line = L.polyline(coords, opts);
     var label = 'Path ' + path.index;
     if (path.count != null && state.doc && state.doc.runs) {
       label += ' (' + path.count + '/' + state.doc.runs + ')';
+    }
+    if (dotted) {
+      label += ' (via unmapped hop(s))';
     }
     line.bindPopup(escapeHtml(label) + (path.reached === false ? '<br>[unreachable]' : ''));
     traceLayer.addLayer(line);
@@ -485,11 +526,139 @@
     }
   }
 
-  function applyDoc(doc) {
+  function allLinkLayers() {
+    return [
+      window.twoLinksTX, window.twoLinksThp, window.twoLinksSnR, window.twoLinksCost, window.twoLinksQual,
+      window.threeLinksTX, window.threeLinksThp, window.threeLinksSnR, window.threeLinksCost, window.threeLinksQual,
+      window.fiveLinksTX, window.fiveLinksThp, window.fiveLinksSnR, window.fiveLinksCost, window.fiveLinksQual,
+      window.nineLinksTX, window.nineLinksThp, window.nineLinksSnR, window.nineLinksCost, window.nineLinksQual,
+      window.noRFLinks, window.superNodeLinks
+    ].filter(Boolean);
+  }
+
+  function setMapLinksVisible(show) {
+    allLinkLayers().forEach(function (layer) {
+      if (!layer || typeof layer.eachLayer !== 'function') return;
+      layer.eachLayer(function (line) {
+        if (!line || !line.options || typeof line.setStyle !== 'function') return;
+        if (line.options.meshmapBaseOpacity === undefined) {
+          line.options.meshmapBaseOpacity =
+            line.options.opacity != null ? line.options.opacity : 0.8;
+        }
+        line.setStyle({
+          opacity: show ? line.options.meshmapBaseOpacity : 0,
+          interactive: !!show
+        });
+      });
+    });
+  }
+
+  function applyHideLinks() {
+    var shouldHide = !!(state.hideLinks && state.doc && state.doc.paths && state.doc.paths.length);
+    setMapLinksVisible(!shouldHide);
+  }
+
+  function formatHopText(hop) {
+    if (!hop || hop.unreachable) {
+      return (hop && hop.hop != null ? hop.hop : '?') + ' *';
+    }
+    var label = hop.hostname || hop.ip || '*';
+    if (hop.hostname && hop.ip && hop.hostname !== hop.ip) {
+      label = hop.hostname + ' (' + hop.ip + ')';
+    } else if (hop.ip && !hop.hostname) {
+      label = hop.ip;
+    }
+    var bits = [String(hop.hop), label];
+    if (hop.linkType) bits.push(hop.linkType);
+    if (hop.rttAvgMs != null) {
+      bits.push('avg ' + hop.rttAvgMs + 'ms' +
+        (hop.rttDevMs != null ? ' +- ' + hop.rttDevMs + 'ms' : ''));
+    } else if (hop.rttMs != null) {
+      bits.push(hop.rttMs + ' ms');
+    }
+    return bits.join(' ');
+  }
+
+  function formatDocAsText(doc) {
+    if (!doc) return '';
+    var lines = [];
+    var tool = doc.tool || 'trace';
+    if (tool === 'stableroute') {
+      lines.push('stableroute' + (doc.version ? '(' + doc.version + ')' : '') +
+        ': destination ' + (doc.destination || '?') +
+        '  runs ' + (doc.runs != null ? doc.runs : '?'));
+      if (doc.using) lines.push(String(doc.using));
+      if (doc.source) lines.push('source ' + doc.source);
+      var sum = doc.summary || {};
+      lines.push('Summary:');
+      lines.push('  unique paths: ' + (sum.uniquePaths != null ? sum.uniquePaths : (doc.paths || []).length));
+      if (sum.shortest != null) lines.push('  shortest route: ' + sum.shortest + ' hops');
+      if (sum.longest != null) lines.push('  longest route: ' + sum.longest + ' hops');
+      if (sum.unreachable != null) lines.push('  Unreachable: ' + sum.unreachable);
+      if (sum.mostCommonCount != null && doc.runs) {
+        var pct = doc.runs ? Math.round((sum.mostCommonCount * 100) / doc.runs) : 0;
+        lines.push('  most common: ' + sum.mostCommonCount + '/' + doc.runs + ' (' + pct + '%)');
+      }
+      lines.push('');
+      (doc.paths || []).forEach(function (path) {
+        var header = 'Path ' + path.index + ': ' +
+          (path.count != null && doc.runs ? path.count + '/' + doc.runs : String(path.count || ''));
+        if (path.reached === false) header += '  [unreachable]';
+        lines.push('-------------------------------------------------');
+        lines.push(header);
+        (path.hops || []).forEach(function (hop) {
+          lines.push('  ' + formatHopText(hop));
+        });
+        lines.push('');
+      });
+    } else {
+      lines.push('traceroute to ' + (doc.destination || '?') +
+        (doc.source ? ' (from ' + doc.source + ')' : ''));
+      if (doc.version) lines.push('Aredn-Traceroute(' + doc.version + ')');
+      if (doc.babelMetric != null) lines.push('Babel Metric ' + doc.babelMetric);
+      var path0 = (doc.paths && doc.paths[0]) || { hops: [] };
+      (path0.hops || []).forEach(function (hop) {
+        lines.push(' ' + formatHopText(hop));
+      });
+    }
+    return lines.join('\n').replace(/\n+$/, '') + '\n';
+  }
+
+  function updateConsole() {
+    if (!control || !control._consoleBody) return;
+    var text = state.rawText || formatDocAsText(state.doc) || '';
+    control._consoleBody.textContent = text || '(no report loaded)';
+    if (control._console) {
+      if (text && !state.consoleMinimized) {
+        L.DomUtil.addClass(control._console, 'meshmap-vtrace-console-open');
+        L.DomUtil.removeClass(control._console, 'meshmap-vtrace-console-min');
+      } else if (text && state.consoleMinimized) {
+        L.DomUtil.addClass(control._console, 'meshmap-vtrace-console-open');
+        L.DomUtil.addClass(control._console, 'meshmap-vtrace-console-min');
+      } else if (!text) {
+        L.DomUtil.removeClass(control._console, 'meshmap-vtrace-console-open');
+        L.DomUtil.removeClass(control._console, 'meshmap-vtrace-console-min');
+      }
+      if (control._consoleToggle) {
+        control._consoleToggle.textContent = state.consoleMinimized ? 'Show' : 'Minimize';
+        control._consoleToggle.setAttribute('aria-expanded', state.consoleMinimized ? 'false' : 'true');
+      }
+    }
+  }
+
+  function applyDoc(doc, rawText) {
     state.doc = doc;
+    if (rawText != null && String(rawText).trim()) {
+      state.rawText = String(rawText);
+    } else {
+      state.rawText = formatDocAsText(doc);
+    }
     state.selected = 'all';
+    state.consoleMinimized = false;
     ensureLayerOn();
+    applyHideLinks();
     drawDoc();
+    updateConsole();
   }
 
   function renderPathControls() {
@@ -640,16 +809,26 @@
           '<input list="meshmap-vtrace-nodes" class="meshmap-vtrace-source" autocomplete="off"></label>' +
           '<label class="meshmap-vtrace-field">Destination' +
           '<input list="meshmap-vtrace-nodes" class="meshmap-vtrace-dest" autocomplete="off"></label>' +
-          '<label class="meshmap-vtrace-field meshmap-vtrace-n-wrap">Runs (stableroute)' +
+          '<label class="meshmap-vtrace-field meshmap-vtrace-n-wrap" hidden>Runs (stableroute)' +
           '<input type="number" class="meshmap-vtrace-n" min="1" max="20" value="10"></label>' +
           '<datalist id="meshmap-vtrace-nodes"></datalist>' +
           '<div class="meshmap-vtrace-row">' +
           '<button type="button" class="meshmap-vtrace-run">Run via meshinfo</button>' +
           '<button type="button" class="meshmap-vtrace-direct" hidden>Run direct</button>' +
           '</div>' +
+          '<label class="meshmap-vtrace-check">' +
+          '<input type="checkbox" class="meshmap-vtrace-hide-links"> Hide map links while tracing</label>' +
           '<div class="meshmap-vtrace-subheader">Paths</div>' +
           '<div class="meshmap-vtrace-paths"></div>' +
           '<div class="meshmap-vtrace-status"></div>';
+
+        var consoleEl = L.DomUtil.create('div', 'meshmap-vtrace-console', map.getContainer());
+        consoleEl.innerHTML =
+          '<div class="meshmap-vtrace-console-bar">' +
+          '<span class="meshmap-vtrace-console-title">Trace report</span>' +
+          '<button type="button" class="meshmap-vtrace-console-toggle" aria-expanded="true">Minimize</button>' +
+          '</div>' +
+          '<pre class="meshmap-vtrace-console-body">(no report loaded)</pre>';
 
         var paste = panel.querySelector('.meshmap-vtrace-paste');
         var parseBtn = panel.querySelector('.meshmap-vtrace-parse');
@@ -657,12 +836,16 @@
         var toolSel = panel.querySelector('.meshmap-vtrace-tool');
         var sourceIn = panel.querySelector('.meshmap-vtrace-source');
         var destIn = panel.querySelector('.meshmap-vtrace-dest');
+        var nWrap = panel.querySelector('.meshmap-vtrace-n-wrap');
         var nIn = panel.querySelector('.meshmap-vtrace-n');
         var runBtn = panel.querySelector('.meshmap-vtrace-run');
         var directBtn = panel.querySelector('.meshmap-vtrace-direct');
+        var hideLinksCb = panel.querySelector('.meshmap-vtrace-hide-links');
         var pathsBox = panel.querySelector('.meshmap-vtrace-paths');
         var statusEl = panel.querySelector('.meshmap-vtrace-status');
         var list = panel.querySelector('#meshmap-vtrace-nodes');
+        var consoleToggle = consoleEl.querySelector('.meshmap-vtrace-console-toggle');
+        var consoleBody = consoleEl.querySelector('.meshmap-vtrace-console-body');
 
         nodeNames.forEach(function (name) {
           var opt = document.createElement('option');
@@ -681,6 +864,15 @@
         this._paths = pathsBox;
         this._runBtn = runBtn;
         this._directBtn = directBtn;
+        this._console = consoleEl;
+        this._consoleBody = consoleBody;
+        this._consoleToggle = consoleToggle;
+
+        function syncRunsVisibility() {
+          nWrap.hidden = toolSel.value !== 'stableroute';
+        }
+        syncRunsVisibility();
+        toolSel.addEventListener('change', syncRunsVisibility);
 
         function togglePanel(open) {
           if (open) {
@@ -694,6 +886,8 @@
 
         L.DomEvent.disableClickPropagation(root);
         L.DomEvent.disableScrollPropagation(panel);
+        L.DomEvent.disableClickPropagation(consoleEl);
+        L.DomEvent.disableScrollPropagation(consoleEl);
         L.DomEvent.on(btn, 'click', function (e) {
           L.DomEvent.preventDefault(e);
           var open = !L.DomUtil.hasClass(panel, 'meshmap-vtrace-panel-open');
@@ -703,20 +897,37 @@
           }
         });
 
+        hideLinksCb.checked = !!state.hideLinks;
+        hideLinksCb.addEventListener('change', function () {
+          state.hideLinks = !!hideLinksCb.checked;
+          applyHideLinks();
+        });
+
+        consoleToggle.addEventListener('click', function () {
+          state.consoleMinimized = !state.consoleMinimized;
+          updateConsole();
+        });
+
         parseBtn.addEventListener('click', function () {
           try {
-            applyDoc(parsePaste(paste.value));
+            var raw = paste.value;
+            var doc = parsePaste(raw);
+            var keepRaw = raw.trim().charAt(0) !== '{';
+            applyDoc(doc, keepRaw ? raw : null);
           } catch (err) {
             setStatus(String(err.message || err));
           }
         });
         clearBtn.addEventListener('click', function () {
           state.doc = null;
+          state.rawText = '';
           state.selected = 'all';
           clearDraw();
           paste.value = '';
           setStatus('Cleared');
           renderPathControls();
+          updateConsole();
+          applyHideLinks();
         });
 
         async function doRun(direct) {
@@ -744,6 +955,7 @@
         runBtn.addEventListener('click', function () { doRun(false); });
         directBtn.addEventListener('click', function () { doRun(true); });
 
+        updateConsole();
         return root;
       }
     });
@@ -765,6 +977,7 @@
     if (syncingLayer) return;
     if (e.name === LAYER_NAME || e.layer === traceLayer) {
       clearDraw();
+      setMapLinksVisible(true);
       if (control && control._panel) {
         L.DomUtil.removeClass(control._container, 'meshmap-vtrace-expanded');
         L.DomUtil.removeClass(control._panel, 'meshmap-vtrace-panel-open');
@@ -777,13 +990,19 @@
     mapInfo = info || {};
     indexDevices(allDevices);
     if (control) {
-      try { map.removeControl(control); } catch (err) { /* ignore */ }
+      try {
+        if (control._console && control._console.parentNode) {
+          control._console.parentNode.removeChild(control._console);
+        }
+        map.removeControl(control);
+      } catch (err) { /* ignore */ }
     }
     control = buildControl();
     control.addTo(map);
     map.on('overlayadd', onOverlayAdd);
     map.on('overlayremove', onOverlayRemove);
     renderPathControls();
+    updateConsole();
   }
 
   window.MeshmapVisualTrace = {
