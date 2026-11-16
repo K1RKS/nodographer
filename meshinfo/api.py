@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
 """
-meshinfo read-only HTTP API.
+meshinfo HTTP API.
 
 Serves the last published snapshot (<dataDir>/current) written by the poller.
-It never talks to the database or the mesh, so it keeps serving the last good
-scan while the poller is scanning, restarting, or failing.
+Snapshot GETs never talk to the database or the mesh, so the last good scan
+stays available while the poller is scanning, restarting, or failing.
 
-  GET /api/v1/map_data.json          map markers, links and poll stats
-  GET /api/v1/node_report_data.json  node report table
-  GET /api/v1/nodes.kml|csv|json     node exports
-  GET /api/v1/manifest.json          snapshot id, timestamps, counts, file hashes
-  GET /api/v1/status.json            scan state + current snapshot summary
-  GET /healthz                       200 if a snapshot is published, else 503
+When [api] enableTraceProxy is true, POST /api/v1/trace proxies traceroute /
+stableroute requests to a source node found in the current snapshot (SSRF-safe).
+
+  GET  /api/v1/map_data.json          map markers, links and poll stats
+  GET  /api/v1/node_report_data.json  node report table
+  GET  /api/v1/nodes.kml|csv|json     node exports
+  GET  /api/v1/manifest.json          snapshot id, timestamps, counts, file hashes
+  GET  /api/v1/status.json            scan state + current snapshot summary
+  POST /api/v1/trace                  live traceroute/stableroute proxy (opt-in)
+  GET  /healthz                       200 if a snapshot is published, else 503
 
 File paths match the names in <dataDir>/current/, so a frontend can switch
 between a local path and this API by changing only its base URL.
 """
 
+from __future__ import annotations
+
 import argparse
+import asyncio
 import json
 import logging
 import sys
@@ -29,6 +36,12 @@ from aiohttp import web
 
 from meshinfo_config import ConfigManager
 from publisher import MANIFEST, SNAPSHOT_FILES, STATUS, current_snapshot_dir, read_json
+from trace_proxy import (
+    DATA_DIR_KEY as TRACE_DATA_DIR_KEY,
+    TRACE_CFG_KEY,
+    TRACE_SEM_KEY,
+    handle_trace,
+)
 
 API_PREFIX = '/api/v1'
 SERVED_FILES = frozenset(SNAPSHOT_FILES + (MANIFEST,))
@@ -37,7 +50,7 @@ CONTENT_TYPES = {
     '.csv': 'text/csv',
     '.kml': 'application/vnd.google-earth.kml+xml',
 }
-DATA_DIR_KEY = web.AppKey('data_dir', Path)
+DATA_DIR_KEY = TRACE_DATA_DIR_KEY
 ORIGINS_KEY = web.AppKey('allow_origins', tuple)
 
 logger = logging.getLogger('meshinfo.api')
@@ -124,6 +137,8 @@ async def serve_status(request: web.Request) -> web.Response:
     payload = dict(status)
     payload['snapshot'] = _snapshot_summary(manifest)
     payload['ageSec'] = _age_sec((manifest or {}).get('publishedAt'))
+    cfg = request.app.get(TRACE_CFG_KEY) or {}
+    payload['traceProxy'] = bool(cfg.get('enabled'))
     return _json_response(payload)
 
 
@@ -137,10 +152,13 @@ async def healthz(request: web.Request) -> web.Response:
 
 
 async def index(request: web.Request) -> web.Response:
+    cfg = request.app.get(TRACE_CFG_KEY) or {}
     return _json_response({
         'service': 'meshinfo',
         'files': sorted(SERVED_FILES | {STATUS}),
         'prefix': API_PREFIX + '/',
+        'traceProxy': bool(cfg.get('enabled')),
+        'traceEndpoint': API_PREFIX + '/trace' if cfg.get('enabled') else None,
     })
 
 
@@ -161,8 +179,14 @@ async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
         resp.headers['Access-Control-Allow-Origin'] = origin
         resp.headers.add('Vary', 'Origin')
     if 'Access-Control-Allow-Origin' in resp.headers:
-        resp.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
-        resp.headers['Access-Control-Allow-Headers'] = 'If-None-Match'
+        methods = 'GET, HEAD, OPTIONS'
+        headers = 'If-None-Match'
+        cfg = request.app.get(TRACE_CFG_KEY) or {}
+        if cfg.get('enabled'):
+            methods = 'GET, HEAD, POST, OPTIONS'
+            headers = 'If-None-Match, Content-Type'
+        resp.headers['Access-Control-Allow-Methods'] = methods
+        resp.headers['Access-Control-Allow-Headers'] = headers
         resp.headers['Access-Control-Expose-Headers'] = 'ETag, X-Meshinfo-Snapshot'
         resp.headers['Access-Control-Max-Age'] = '86400'
     if isinstance(resp, web.HTTPException):
@@ -170,19 +194,54 @@ async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
     return resp
 
 
-def create_app(data_dir, allow_origins: Iterable[str] = ('*',)) -> web.Application:
+def _truthy(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def create_app(
+    data_dir,
+    allow_origins: Iterable[str] = ('*',),
+    trace_cfg: Optional[Dict[str, Any]] = None,
+) -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     app[DATA_DIR_KEY] = Path(data_dir)
     app[ORIGINS_KEY] = tuple(allow_origins)
+    cfg = dict(trace_cfg or {})
+    cfg.setdefault('enabled', False)
+    cfg.setdefault('traceTimeoutSec', 120)
+    cfg.setdefault('stablerouteTimeoutSec', 120)
+    cfg.setdefault('stablerouteMaxN', 20)
+    cfg.setdefault('traceMaxConcurrent', 2)
+    app[TRACE_CFG_KEY] = cfg
+    app[TRACE_SEM_KEY] = asyncio.Semaphore(int(cfg.get('traceMaxConcurrent') or 2))
+
     app.router.add_get('/healthz', healthz)
     app.router.add_get(API_PREFIX + '/', index)
+    app.router.add_post(API_PREFIX + '/trace', handle_trace)
+    app.router.add_route('OPTIONS', API_PREFIX + '/trace', handle_trace)
     app.router.add_get(API_PREFIX + '/{name}', serve_snapshot_file)
     app.router.add_route('OPTIONS', API_PREFIX + '/{name}', serve_snapshot_file)
     return app
 
 
+def _trace_cfg_from_config(config: ConfigManager) -> Dict[str, Any]:
+    return {
+        'enabled': _truthy(config.get('api', 'enableTraceProxy', False)),
+        'traceTimeoutSec': config.getfloat('api', 'traceTimeoutSec', 120.0),
+        'stablerouteTimeoutSec': config.getfloat('api', 'stablerouteTimeoutSec', 120.0),
+        'stablerouteMaxN': config.getint('api', 'stablerouteMaxN', 20),
+        'traceMaxConcurrent': config.getint('api', 'traceMaxConcurrent', 2),
+    }
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description='meshinfo read-only data API')
+    parser = argparse.ArgumentParser(description='meshinfo data API')
     parser.add_argument('--config', default=None,
                         help='Path to meshinfo.toml (default: next to this script)')
     parser.add_argument('--listen', default=None, help='Override [api] listen address')
@@ -197,10 +256,19 @@ def main() -> None:
     origins = config.get('api', 'allowOrigins', ['*'])
     if isinstance(origins, str):
         origins = [origins]
+    trace_cfg = _trace_cfg_from_config(config)
 
-    logger.info(f"Serving {config.data_dir}/current on http://{host}:{port}{API_PREFIX}/")
-    web.run_app(create_app(config.data_dir, origins), host=host, port=port,
-                print=None, access_log=None)
+    logger.info(
+        'Serving %s/current on http://%s:%d%s/ (traceProxy=%s)',
+        config.data_dir, host, port, API_PREFIX, trace_cfg['enabled'],
+    )
+    web.run_app(
+        create_app(config.data_dir, origins, trace_cfg=trace_cfg),
+        host=host,
+        port=port,
+        print=None,
+        access_log=None,
+    )
 
 
 if __name__ == '__main__':

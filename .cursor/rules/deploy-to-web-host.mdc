@@ -1,0 +1,26 @@
+---
+description: After frontend changes, always deploy to the meshmap test host for testing
+alwaysApply: true
+---
+
+# Deploy to meshmap test host after changes
+
+When you change Nodographer **frontend** files (HTML/CSS/JS/images under `frontend/`), **always copy them to the meshmap test web host in the same turn** so they can be tested immediately. Do not wait to be asked.
+
+## Host (test deploy target)
+
+- SSH: `k1rks-testmap` (user `meshmap`)
+- Docroot: `/srv/meshmap/frontend/` (also linked from `/var/www/html/meshmap`)
+- Full `/srv/meshmap` install on this host (frontend + meshinfo may both be present)
+
+## How
+
+- `scp` changed files into `/tmp/` then `cp` into the matching paths under `/srv/meshmap/frontend/` (`js/`, `css/`, `images/`, `index.html`, etc.)
+- `chmod 644` on installed files (owner is typically `meshmap`)
+- Verify with `grep` or file presence, then tell the user to hard-refresh
+
+## Do not
+
+- Deploy secrets, `.ssh*`, `.deploy-stage/`, or `reports/`
+- Treat `public-meshmap-meshweb` as the default test target anymore (use `k1rks-testmap`)
+- Skip host deploy just because git commit/push was not requested; still deploy for testing

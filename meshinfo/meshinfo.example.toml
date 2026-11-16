@@ -69,13 +69,21 @@ minNodeRatio = 0.5
 # Document name used in nodes.kml (shown in Google Earth Pro)
 exportTitle = "Nodographer Mesh Map"
 
-# Read-only HTTP API (meshinfo-api.service). Serves the current snapshot at
+# HTTP API (meshinfo-api.service). Serves the current snapshot at
 #   /api/v1/map_data.json, /api/v1/node_report_data.json, /api/v1/nodes.kml,
 #   /api/v1/nodes.csv, /api/v1/nodes.json, /api/v1/manifest.json,
 #   /api/v1/status.json and /healthz
+# Optional live proxy (off by default; enable on mesh-reachable hosts only):
+#   POST /api/v1/trace  -> node /cgi-bin/traceroute|stableroute?format=json
 [api]
 listen = "0.0.0.0"
 port = 8090
 # Origins allowed to fetch the API from a browser (CORS). "*" is fine for
 # public read-only mesh data; list specific origins to restrict it.
 allowOrigins = ["*"]
+# Live visual-traceroute proxy. Leave false on public snapshot-only hosts.
+enableTraceProxy = false
+traceTimeoutSec = 120
+stablerouteTimeoutSec = 120
+stablerouteMaxN = 20
+traceMaxConcurrent = 2

@@ -11,8 +11,8 @@ Nodographer is a mesh mapping web app and API made of two parts. They can run on
 - **meshinfo** (`meshinfo/`): the scanner and data API.
   - `meshinfo-poller.service` is a Python async daemon. It polls AREDN nodes, collects network topology and node data, and keeps the node database (MariaDB/MySQL).
   - After every successful scan it publishes the results as one **snapshot**: `map_data.json`, `node_report_data.json`, `nodes.kml`, `nodes.csv` and `nodes.json`.
-  - `meshinfo-api.service` is a small read-only HTTP API that serves the current snapshot.
-- **Frontend** (`frontend/`): a static, Leaflet-based map with grouped layer controls, search, and a detailed node report page. It reads the snapshot from a configurable **base URL**. That can be a local path on the same VM, or the meshinfo API on another VM.
+  - `meshinfo-api.service` is an HTTP API that serves the current snapshot (read-only by default). When `[api] enableTraceProxy` is on, it can also proxy live traceroute / stableroute runs to mesh nodes for the Visual Traceroute overlay.
+- **Frontend** (`frontend/`): a static, Leaflet-based map with grouped layer controls, search, Visual Traceroute overlay, and a detailed node report page. It reads the snapshot from a configurable **base URL**. That can be a local path on the same VM, or the meshinfo API on another VM.
 
 ```
 meshinfo VM
@@ -45,7 +45,8 @@ The code lives in one git checkout (for example `/srv/meshmap`). Each VM install
 
 - **Split or combined deployment**: scanner and map on one VM, or on separate VMs
 - **Last-good snapshots**: published atomically; failed or partial scans never replace good data
-- **Read-only data API** with ETag/304, gzip, CORS and a `status.json` scan-state endpoint
+- **Data API** with ETag/304, gzip, CORS and a `status.json` scan-state endpoint
+- **Visual Traceroute overlay**: paste aredn-traceroute / stableroute JSON or text, or run live via meshinfo `POST /api/v1/trace` (opt-in `enableTraceProxy`)
 - **Comprehensive Logging**: Integrated with systemd journal (INFO, DEBUG, ERROR levels)
 - **Flush Mode**: `--flush` flag clears stale data and resets node state
 
@@ -523,8 +524,24 @@ The last `keepSnapshots` snapshots are kept. Because a reader that opened files 
 | `GET /api/v1/node_report_data.json` | Node report table |
 | `GET /api/v1/nodes.kml`, `nodes.csv`, `nodes.json` | Node exports (below) |
 | `GET /api/v1/manifest.json` | Current snapshot id, timestamps, counts, file hashes |
-| `GET /api/v1/status.json` | `status.json` plus a `snapshot` summary and `ageSec` |
+| `GET /api/v1/status.json` | `status.json` plus a `snapshot` summary, `ageSec`, and `traceProxy` |
+| `POST /api/v1/trace` | Live traceroute/stableroute proxy (opt-in; see below) |
 | `GET /healthz` | `200 {"ok":true,"snapshot":...}` once a snapshot exists, else `503` |
+
+#### Live Visual Traceroute proxy
+
+Off by default. On a meshinfo host that can reach mesh nodes, set in `meshinfo.toml`:
+
+```toml
+[api]
+enableTraceProxy = true
+```
+
+Then the map’s **Visual Traceroute** panel can `POST /api/v1/trace` with
+`{"tool":"traceroute"|"stableroute","source":"nodeA","destination":"nodeB","n":10}`.
+The API resolves `source` from the current snapshot (SSRF guard), fetches that
+node’s CGI with `format=json`, and returns schemaVersion-1 JSON. Paste of CLI /
+Tools text still works on the frontend without the proxy.
 
 Snapshot files are sent with:
 - `ETag` (the snapshot id plus the file name); `If-None-Match` returns `304`

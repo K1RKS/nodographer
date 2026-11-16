@@ -72,6 +72,8 @@
 	<script src="js/meshmap-addressSearch.js"></script>
 	<link rel="stylesheet" href="css/meshmap-coverage.css">
 	<script src="js/meshmap-coverage.js"></script>
+	<link rel="stylesheet" href="css/meshmap-visualTrace.css">
+	<script src="js/meshmap-visualTrace.js"></script>
 
 	<script src="js/nodographer-config.js"></script>
 	<script src="js/meshmap-snrCalculator.js"></script>
@@ -367,6 +369,9 @@ groupedOverlays = {
 	},
 	"Coverage": {
 		"Radio Coverage": (window.MeshmapCoverage ? MeshmapCoverage.layer : L.layerGroup())
+	},
+	"Trace": {
+		"Visual Traceroute": (window.MeshmapVisualTrace ? MeshmapVisualTrace.layer : L.layerGroup())
 	}
 };
 
@@ -614,6 +619,9 @@ if (window.MeshmapMarkerMenu) {
 }
 if (window.MeshmapCoverage) {
 	MeshmapCoverage.init(map, allDevices, mapInfo);
+}
+if (window.MeshmapVisualTrace) {
+	MeshmapVisualTrace.init(map, allDevices, mapInfo);
 }
 
 //change link lines based on different metrics
