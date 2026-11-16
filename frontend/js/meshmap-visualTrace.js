@@ -1384,6 +1384,16 @@
             setStatus('Source and destination are required');
             return;
           }
+          // Drop the previous overlay immediately so an old path is not mistaken
+          // for the new run finishing.
+          state.doc = null;
+          state.rawText = '';
+          state.selected = 'all';
+          clearDraw();
+          renderPathControls();
+          updateConsole();
+          applyHideLinks();
+
           setBusy(true);
           var progress = startProgress({ tool: tool, n: n, direct: direct });
           saveSession();
