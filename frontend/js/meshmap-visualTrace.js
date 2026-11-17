@@ -62,7 +62,7 @@
       tool: form.toolSel ? form.toolSel.value : 'traceroute',
       source: form.sourceIn ? form.sourceIn.value : '',
       destination: form.destIn ? form.destIn.value : '',
-      n: form.nIn ? (parseInt(form.nIn.value, 10) || 10) : 10,
+      n: form.nIn ? (parseInt(form.nIn.value, 10) || 5) : 5,
       paste: form.paste ? form.paste.value : '',
       hideLinks: !!state.hideLinks,
       offsetPaths: !!state.offsetPaths,
@@ -192,7 +192,7 @@
   function parseStableHopLine(line) {
     line = String(line || '').trim();
     if (!line) return null;
-    var m = line.match(/^(\d+)\s+\*\s*(?:avg\s+(\d+)ms\s+\+-\s+(\d+)ms)?/);
+    var m = line.match(/^(\d+)\s+\*\s*(?:avg\s+(\d+)ms\s+(?:\+-|\u00b1)\s+(\d+)ms)?/);
     if (m) {
       var avg = m[2] != null ? parseInt(m[2], 10) : null;
       return {
@@ -207,7 +207,7 @@
       };
     }
     m = line.match(
-      /^(\d+)\s+([^\s(]+)\s+\(([0-9.]+)\)(?:\s+(DtD|RF|WG|Xlink|-))?\s*(?:avg\s+(\d+)ms\s+\+-\s+(\d+)ms)?/
+      /^(\d+)\s+([^\s(]+)\s+\(([0-9.]+)\)(?:\s+(DtD|RF|WG|Xlink|-))?\s*(?:avg\s+(\d+)ms\s+(?:\+-|\u00b1)\s+(\d+)ms)?/
     );
     if (m) {
       avg = m[5] != null ? parseInt(m[5], 10) : null;
@@ -399,7 +399,7 @@
     ];
     if (hop.linkType) lines.push('Link: ' + escapeHtml(hop.linkType));
     if (hop.rttAvgMs != null) {
-      lines.push('RTT avg ' + hop.rttAvgMs + 'ms' + (hop.rttDevMs != null ? ' +- ' + hop.rttDevMs + 'ms' : ''));
+      lines.push('RTT avg ' + hop.rttAvgMs + 'ms' + (hop.rttDevMs != null ? ' \u00b1 ' + hop.rttDevMs + 'ms' : ''));
     } else if (hop.rttMs != null) {
       lines.push('RTT ' + hop.rttMs + 'ms');
     }
@@ -576,16 +576,23 @@
    * Draw solid segments between consecutive known hops; when unknowns sit
    * between two known hops, draw a dotted chord so the path still looks complete.
    */
+  function hopDelayLabel(hop) {
+    if (!hop) return '?';
+    var avg = hop.rttAvgMs != null ? hop.rttAvgMs : hop.rttMs;
+    if (avg == null || !isFinite(Number(avg))) return '?';
+    var avgStr = Math.round(Number(avg)) + 'ms';
+    if (hop.rttDevMs != null && isFinite(Number(hop.rttDevMs))) {
+      return avgStr + ' \u00b1 ' + Math.round(Number(hop.rttDevMs)) + 'ms';
+    }
+    return avgStr;
+  }
+
   function hopLabelText(hop) {
     if (!hop || (!state.showHop && !state.showDelay)) return '';
     var hopNum = hop.hop != null ? String(hop.hop) : '?';
-    var delay = hop.rttAvgMs != null ? hop.rttAvgMs : hop.rttMs;
-    var delayStr = delay != null && isFinite(Number(delay))
-      ? (Math.round(Number(delay)) + 'ms')
-      : '?';
-    if (state.showHop && state.showDelay) return hopNum + ' : ' + delayStr;
+    if (state.showHop && state.showDelay) return hopNum + ' : ' + hopDelayLabel(hop);
     if (state.showHop) return hopNum;
-    return delayStr;
+    return hopDelayLabel(hop);
   }
 
   function addHopLabel(latlng, text, color) {
@@ -785,7 +792,7 @@
     if (hop.linkType) bits.push(hop.linkType);
     if (hop.rttAvgMs != null) {
       bits.push('avg ' + hop.rttAvgMs + 'ms' +
-        (hop.rttDevMs != null ? ' +- ' + hop.rttDevMs + 'ms' : ''));
+        (hop.rttDevMs != null ? ' \u00b1 ' + hop.rttDevMs + 'ms' : ''));
     } else if (hop.rttMs != null) {
       bits.push(hop.rttMs + ' ms');
     }
@@ -1195,7 +1202,7 @@
     var qs = 'server=' + encodeURIComponent(destination);
     if (wantJson) qs += '&format=json';
     if (tool === 'stableroute') {
-      qs += '&n=' + encodeURIComponent(String(n || 10));
+      qs += '&n=' + encodeURIComponent(String(n || 5));
     }
     var path = tool === 'stableroute' ? '/cgi-bin/stableroute' : '/cgi-bin/traceroute';
     return 'http://' + host + path + '?' + qs;
@@ -1319,7 +1326,7 @@
           '<label class="meshmap-vtrace-field">Destination' +
           '<input list="meshmap-vtrace-nodes" class="meshmap-vtrace-dest" autocomplete="off"></label>' +
           '<label class="meshmap-vtrace-field meshmap-vtrace-n-wrap" hidden>Runs (stableroute)' +
-          '<input type="number" class="meshmap-vtrace-n" min="1" max="20" value="10"></label>' +
+          '<input type="number" class="meshmap-vtrace-n" min="1" max="20" value="5"></label>' +
           '<datalist id="meshmap-vtrace-nodes"></datalist>' +
           '<div class="meshmap-vtrace-row">' +
           '<button type="button" class="meshmap-vtrace-run">Run via meshinfo</button>' +
@@ -1597,7 +1604,7 @@
           var tool = toolSel.value;
           var source = sourceIn.value.trim();
           var destination = destIn.value.trim();
-          var n = parseInt(nIn.value, 10) || 10;
+          var n = parseInt(nIn.value, 10) || 5;
           if (!source || !destination) {
             setStatus('Source and destination are required');
             return;
