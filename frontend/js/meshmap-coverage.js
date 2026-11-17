@@ -1157,7 +1157,8 @@
       this.setModeSelect(state.mode);
       this.setHideUnknownChecked(!!state.hideUnknown);
       this.updateLegend();
-      setLayerVisible(state.mode !== 'off');
+      // Coverage layer is enabled by opening this panel (not the layer picker).
+      setLayerVisible(false);
       redraw();
 
       return container;
@@ -1170,6 +1171,9 @@
     expand: function () {
       L.DomUtil.addClass(this._container, 'meshmap-coverage-expanded');
       L.DomUtil.addClass(this._panel, 'meshmap-coverage-panel-open');
+      // Icon is the enable switch (no longer in the layer picker).
+      if (state.mode === 'off') setMode('node');
+      else setLayerVisible(true);
       this._nameInput.focus();
     },
 
@@ -1178,6 +1182,8 @@
       L.DomUtil.removeClass(this._panel, 'meshmap-coverage-panel-open');
       this._hideSuggest();
       this.closePropsDialog();
+      // Closing the panel disables coverage on the map.
+      if (state.mode !== 'off') setMode('off');
     },
 
     openPropsDialog: function (name) {
@@ -1576,19 +1582,6 @@
     }
     control = new CoverageControl();
     control.addTo(map);
-
-    map.on('overlayadd', function (e) {
-      if (syncingLayer) return;
-      if (e && e.name === LAYER_NAME && state.mode === 'off') {
-        setMode('node');
-      }
-    });
-    map.on('overlayremove', function (e) {
-      if (syncingLayer) return;
-      if (e && e.name === LAYER_NAME && state.mode !== 'off') {
-        setMode('off');
-      }
-    });
   }
 
   window.MeshmapCoverage = {

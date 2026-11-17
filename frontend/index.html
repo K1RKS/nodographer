@@ -367,13 +367,9 @@ groupedOverlays = {
 		"<img src='images/waves2.png' height='20' title='SnR'> SnR": RFLinksSnR,
 		"<img src='images/quality.svg' height='20' title='Link Quality'> Link Quality": RFLinksQual,
 		"<img src='images/cost.svg' height='20' title='Link Cost'> Link Cost": RFLinksCost,
-	},
-	"Coverage": {
-		"Radio Coverage": (window.MeshmapCoverage ? MeshmapCoverage.layer : L.layerGroup())
-	},
-	"Trace": {
-		"Visual Traceroute": (window.MeshmapVisualTrace ? MeshmapVisualTrace.layer : L.layerGroup())
 	}
+	// Radio Coverage + Visual Traceroute are toggled by their own control icons,
+	// not listed in the tile/overlay layer picker.
 };
 
 const __meshmapView = (window.MeshmapSession

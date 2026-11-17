@@ -1068,13 +1068,25 @@
     if (!opts.skipSave) saveSession();
   }
 
-  function ensureLayerOn() {
+  function setTraceLayerVisible(on) {
     if (!map) return;
-    if (!map.hasLayer(traceLayer)) {
-      syncingLayer = true;
-      map.addLayer(traceLayer);
+    syncingLayer = true;
+    try {
+      var isOn = map.hasLayer(traceLayer);
+      if (on && !isOn) map.addLayer(traceLayer);
+      if (!on && isOn) map.removeLayer(traceLayer);
+    } finally {
       syncingLayer = false;
     }
+  }
+
+  function ensureLayerOn() {
+    setTraceLayerVisible(true);
+  }
+
+  function ensureLayerOff() {
+    setTraceLayerVisible(false);
+    restoreMapLinkClicks();
   }
 
   function meshinfoTraceUrl() {
@@ -1925,9 +1937,13 @@
             if (!state.panelPos && isCompactUi()) {
               applyFloatingPos(panel, null, 'meshmap-vtrace-floating-placed');
             }
+            // Icon is the enable switch (no longer in the layer picker).
+            ensureLayerOn();
+            if (state.doc) drawDoc();
           } else {
             L.DomUtil.removeClass(root, 'meshmap-vtrace-expanded');
             L.DomUtil.removeClass(panel, 'meshmap-vtrace-panel-open');
+            ensureLayerOff();
           }
           if (!opts.skipSave) saveSession();
         }
@@ -1941,9 +1957,6 @@
           L.DomEvent.preventDefault(e);
           var open = !L.DomUtil.hasClass(panel, 'meshmap-vtrace-panel-open');
           togglePanel(open);
-          if (open) {
-            ensureLayerOn();
-          }
         });
         if (panelCloseBtn) {
           panelCloseBtn.addEventListener('click', function () {
@@ -2274,34 +2287,6 @@
     }
   }
 
-  function onOverlayAdd(e) {
-    if (syncingLayer) return;
-    if (e.name === LAYER_NAME || e.layer === traceLayer) {
-      if (state.doc) drawDoc();
-      state.panelOpen = true;
-      if (control && control._panel) {
-        L.DomUtil.addClass(control._container, 'meshmap-vtrace-expanded');
-        L.DomUtil.addClass(control._panel, 'meshmap-vtrace-panel-open');
-      }
-      saveSession();
-    }
-  }
-
-  function onOverlayRemove(e) {
-    if (syncingLayer) return;
-    if (e.name === LAYER_NAME || e.layer === traceLayer) {
-      clearDraw();
-      // Layer is off: restore normal mesh-link clicks even if a doc remains.
-      restoreMapLinkClicks();
-      state.panelOpen = false;
-      if (control && control._panel) {
-        L.DomUtil.removeClass(control._container, 'meshmap-vtrace-expanded');
-        L.DomUtil.removeClass(control._panel, 'meshmap-vtrace-panel-open');
-      }
-      saveSession();
-    }
-  }
-
   function onSpiderfyGeometryChange() {
     if (state.doc && state.doc.paths && state.doc.paths.length) {
       drawDoc();
@@ -2334,12 +2319,8 @@
     }
     control = buildControl();
     control.addTo(map);
-    map.off('overlayadd', onOverlayAdd);
-    map.off('overlayremove', onOverlayRemove);
     map.off('zoomend', onZoomOrMoveEnd);
     map.off('resize', reclampFloatingPanels);
-    map.on('overlayadd', onOverlayAdd);
-    map.on('overlayremove', onOverlayRemove);
     map.on('zoomend', onZoomOrMoveEnd);
     map.on('resize', reclampFloatingPanels);
     window.addEventListener('resize', reclampFloatingPanels);
