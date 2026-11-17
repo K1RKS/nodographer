@@ -539,25 +539,36 @@ L.control.scale().addTo(map)
 //SPIDERFY
 oms = new Spiderfy(map);
 oms.disable();
+function meshmapOnSpiderfyActivate(markers) {
+	for (var i = 0; i < markers.length; i++) {
+		markers[i].closePopup();
+	}
+	if (typeof meshmapApplySpiderfyToLinks === 'function') {
+		meshmapApplySpiderfyToLinks();
+	}
+	if (window.MeshmapVisualTrace && typeof MeshmapVisualTrace.redraw === 'function') {
+		MeshmapVisualTrace.redraw();
+	}
+}
+function meshmapOnSpiderfyDeactivate() {
+	if (typeof meshmapApplySpiderfyToLinks === 'function') {
+		meshmapApplySpiderfyToLinks();
+	}
+	if (window.MeshmapVisualTrace && typeof MeshmapVisualTrace.redraw === 'function') {
+		MeshmapVisualTrace.redraw();
+	}
+}
+oms.addListener('activate', meshmapOnSpiderfyActivate);
+oms.addListener('deactivate', meshmapOnSpiderfyDeactivate);
 map.on('zoomend', function(e) {
 	currZoom = e.target._zoom;
 	if(currZoom >= 0) {
 		oms.enable();
 		document.getElementById('spiderfyActive').style.visibility = 'visible';
-		oms.addListener('activate', function(markers) {
-			for(var i = 0; i < markers.length; i++) {
-				markers[i].closePopup();
-			}
-		});
 	}
     if(currZoom <= 12) {
 		oms.disable();
 		document.getElementById('spiderfyActive').style.visibility = 'hidden';
-		oms.removeListener('activate', function(markers) {
-			for(var i = 0; i < markers.length; i++) {
-				markers[i].closePopup();
-			}
-		});
 	}
 });
 

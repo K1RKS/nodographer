@@ -300,6 +300,38 @@
 	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vtrace-path-color, #888) 35%, transparent);
 }
 
+/* Readable on the map's dark translucent popup chrome */
+.meshmap-vtrace-popup {
+	background: #f7f7f7;
+	color: #222;
+	padding: 8px 10px;
+	border-radius: 8px;
+	min-width: 180px;
+	max-width: min(320px, 70vw);
+	font-size: 12px;
+	line-height: 1.4;
+	word-break: break-word;
+}
+
+.meshmap-vtrace-popup-title {
+	font-weight: 700;
+	margin-bottom: 4px;
+	color: #111;
+}
+
+.meshmap-vtrace-popup-k {
+	display: inline-block;
+	min-width: 3.4em;
+	font-weight: 600;
+	color: #555;
+}
+
+.meshmap-vtrace-popup-warn {
+	margin-top: 4px;
+	color: #a33;
+	font-weight: 600;
+}
+
 .meshmap-vtrace-hop-label {
 	background: transparent !important;
 	border: 0 !important;

@@ -72,6 +72,68 @@ function meshmapNodeKey(name) {
 	return String(name || '').toLowerCase().replace(/\.local\.mesh$/i, '');
 }
 
+/** Live marker lat/lng by node key (reflects spiderfy fan-out). */
+function meshmapMarkerPositionsByNode() {
+	var out = {};
+	if (typeof oms === 'undefined' || !oms || typeof oms.getMarkers !== 'function') {
+		return out;
+	}
+	oms.getMarkers().forEach(function (marker) {
+		var title = marker && marker.options && marker.options.title;
+		if (!title || typeof marker.getLatLng !== 'function') return;
+		var ll = marker.getLatLng();
+		if (!ll) return;
+		out[meshmapNodeKey(title)] = [ll.lat, ll.lng];
+	});
+	return out;
+}
+
+/**
+ * Re-anchor RF/DTD/TUN link polylines to current marker positions so that
+ * when Spiderfy fans out co-located nodes, links follow the visible markers.
+ */
+function meshmapApplySpiderfyToLinks() {
+	var pos = meshmapMarkerPositionsByNode();
+	var layers = [
+		typeof twoLinksTX !== 'undefined' ? twoLinksTX : null,
+		typeof twoLinksThp !== 'undefined' ? twoLinksThp : null,
+		typeof twoLinksSnR !== 'undefined' ? twoLinksSnR : null,
+		typeof twoLinksCost !== 'undefined' ? twoLinksCost : null,
+		typeof twoLinksQual !== 'undefined' ? twoLinksQual : null,
+		typeof threeLinksTX !== 'undefined' ? threeLinksTX : null,
+		typeof threeLinksThp !== 'undefined' ? threeLinksThp : null,
+		typeof threeLinksSnR !== 'undefined' ? threeLinksSnR : null,
+		typeof threeLinksCost !== 'undefined' ? threeLinksCost : null,
+		typeof threeLinksQual !== 'undefined' ? threeLinksQual : null,
+		typeof fiveLinksTX !== 'undefined' ? fiveLinksTX : null,
+		typeof fiveLinksThp !== 'undefined' ? fiveLinksThp : null,
+		typeof fiveLinksSnR !== 'undefined' ? fiveLinksSnR : null,
+		typeof fiveLinksCost !== 'undefined' ? fiveLinksCost : null,
+		typeof fiveLinksQual !== 'undefined' ? fiveLinksQual : null,
+		typeof nineLinksTX !== 'undefined' ? nineLinksTX : null,
+		typeof nineLinksThp !== 'undefined' ? nineLinksThp : null,
+		typeof nineLinksSnR !== 'undefined' ? nineLinksSnR : null,
+		typeof nineLinksCost !== 'undefined' ? nineLinksCost : null,
+		typeof nineLinksQual !== 'undefined' ? nineLinksQual : null,
+		typeof noRFLinks !== 'undefined' ? noRFLinks : null,
+		typeof superNodeLinks !== 'undefined' ? superNodeLinks : null
+	];
+	layers.forEach(function (layer) {
+		if (!layer || typeof layer.eachLayer !== 'function') return;
+		layer.eachLayer(function (line) {
+			if (!line || !line.options || typeof line.setLatLngs !== 'function') return;
+			var fromKey = line.options.meshmapFrom;
+			var toKey = line.options.meshmapTo;
+			if (!fromKey && !toKey) return;
+			var latlngs = line.getLatLngs();
+			if (!latlngs || latlngs.length < 2) return;
+			var a = pos[fromKey] || [latlngs[0].lat, latlngs[0].lng];
+			var b = pos[toKey] || [latlngs[1].lat, latlngs[1].lng];
+			line.setLatLngs([a, b]);
+		});
+	});
+}
+
  function createLinks(node, list, nodeLat, nodeLon, layer, linkMetric) {
 	var objArray = Object.entries(list);
 	var linkColor = "#808080";

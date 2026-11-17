@@ -149,7 +149,7 @@ def parse_stable_hop_line(line: str) -> Optional[Dict[str, Any]]:
         }
     m = re.match(
         r'^(\d+)\s+([^\s(]+)\s+\(([0-9.]+)\)(?:\s+(DtD|RF|WG|Xlink|-))?\s*'
-        r'(?:avg\s+(\d+)ms\s+\+-\s+(\d+)ms)?',
+        r'(?:avg\s+(\d+)ms\s+(?:\+-|\u00b1)\s+(\d+)ms)?',
         line,
     )
     if m:
@@ -162,6 +162,29 @@ def parse_stable_hop_line(line: str) -> Optional[Dict[str, Any]]:
             'rttMs': avg,
             'rttAvgMs': avg,
             'rttDevMs': _rtt_int(m.group(6)),
+            'lat': None,
+            'lon': None,
+            'unreachable': False,
+        }
+    # IP-only hop: "3 172.31.69.37 -  avg 59ms +- 22ms"
+    m = re.match(
+        r'^(\d+)\s+(\d{1,3}(?:\.\d{1,3}){3})(?:\s+(DtD|RF|WG|Xlink|-))?\s*'
+        r'(?:avg\s+(\d+)ms\s+(?:\+-|\u00b1)\s+(\d+)ms)?',
+        line,
+    )
+    if m:
+        avg = _rtt_int(m.group(4))
+        link = m.group(3)
+        if link == '-':
+            link = None
+        return {
+            'hop': int(m.group(1)),
+            'hostname': m.group(2),
+            'ip': m.group(2),
+            'linkType': link,
+            'rttMs': avg,
+            'rttAvgMs': avg,
+            'rttDevMs': _rtt_int(m.group(5)),
             'lat': None,
             'lon': None,
             'unreachable': False,

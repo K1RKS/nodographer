@@ -54,3 +54,34 @@ def test_parse_stableroute_text():
     assert doc['paths'][0]['count'] == 7
     assert doc['paths'][0]['hops'][1]['rttAvgMs'] == 45
     assert doc['paths'][0]['key'] == 'nodea|nodeb|nodec'
+
+
+SAMPLE_SR_IP_ONLY = """
+stableroute(0.1.35-r0): destination KG7GDB-Salem-AC3  runs 5
+using aredn-traceroute
+Summary:
+  unique paths: 1
+  shortest route: 4 hops
+  longest route: 4 hops
+  Unreachable: 0
+  most common: 5/5 (100%)
+
+-------------------------------------------------
+Path 1: 5/5 (100%)
+  1 AH6LE-X86-QTH (10.28.156.227) WG  avg 29ms +- 10ms
+  2 KJ7DZ-WVMN (10.194.119.66) WG  avg 59ms +- 6ms
+  3 172.31.69.37 -  avg 59ms +- 22ms
+  4 KG7GDB-Salem-AC3 (10.90.119.203) -  avg 78ms +- 23ms
+"""
+
+
+def test_parse_stableroute_ip_only_hop():
+    doc = parse_stableroute_text(SAMPLE_SR_IP_ONLY)
+    hops = doc['paths'][0]['hops']
+    assert len(hops) == 4
+    assert hops[2]['hop'] == 3
+    assert hops[2]['ip'] == '172.31.69.37'
+    assert hops[2]['hostname'] == '172.31.69.37'
+    assert hops[2]['rttAvgMs'] == 59
+    assert hops[2]['rttDevMs'] == 22
+    assert hops[3]['hop'] == 4

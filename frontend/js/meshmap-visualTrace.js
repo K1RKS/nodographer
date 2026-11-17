@@ -222,6 +222,23 @@
         unreachable: false
       };
     }
+    // IP-only hop: "3 172.31.69.37 -  avg 59ms +- 22ms"
+    m = line.match(
+      /^(\d+)\s+(\d{1,3}(?:\.\d{1,3}){3})(?:\s+(DtD|RF|WG|Xlink|-))?\s*(?:avg\s+(\d+)ms\s+(?:\+-|\u00b1)\s+(\d+)ms)?/
+    );
+    if (m) {
+      avg = m[4] != null ? parseInt(m[4], 10) : null;
+      return {
+        hop: parseInt(m[1], 10),
+        hostname: m[2],
+        ip: m[2],
+        linkType: m[3] && m[3] !== '-' ? m[3] : null,
+        rttMs: avg,
+        rttAvgMs: avg,
+        rttDevMs: m[5] != null ? parseInt(m[5], 10) : null,
+        unreachable: false
+      };
+    }
     return null;
   }
 
@@ -364,7 +381,36 @@
     return trDoc;
   }
 
+  /** Prefer live spiderfy marker position when the node is on the map. */
+  function markerLatLonForNode(hostname, ip) {
+    var d = findDevice(hostname, ip);
+    var names = [];
+    if (hostname) names.push(hostname);
+    if (d && d.node) names.push(d.node);
+    if (typeof oms === 'undefined' || !oms || typeof oms.getMarkers !== 'function') {
+      return null;
+    }
+    var markers = oms.getMarkers();
+    var want = {};
+    names.forEach(function (n) {
+      var k = nodeKey(n);
+      if (k) want[k] = true;
+    });
+    if (!Object.keys(want).length) return null;
+    for (var i = 0; i < markers.length; i++) {
+      var m = markers[i];
+      var title = m && m.options && m.options.title;
+      if (!title || !want[nodeKey(title)]) continue;
+      var ll = m.getLatLng();
+      if (!ll) continue;
+      return { lat: ll.lat, lon: ll.lng, via: 'marker', node: title, hostname: title };
+    }
+    return null;
+  }
+
   function resolveHopLatLon(hop) {
+    var fromMarker = markerLatLonForNode(hop && hop.hostname, hop && hop.ip);
+    if (fromMarker) return fromMarker;
     if (hop && hop.lat != null && hop.lon != null && isFinite(Number(hop.lat)) && isFinite(Number(hop.lon))) {
       var lat = Number(hop.lat);
       var lon = Number(hop.lon);
@@ -379,11 +425,59 @@
     return null;
   }
 
-  function sourceLatLon(doc) {
-    if (!doc || !doc.source) return null;
-    var d = findDevice(doc.source, null);
+  function sourceNameCandidates(doc) {
+    var names = [];
+    function add(n) {
+      n = String(n || '').trim();
+      if (!n) return;
+      var k = nodeKey(n);
+      if (!k) return;
+      if (names.indexOf(k) < 0) names.push(k);
+      if (names.indexOf(n) < 0) names.push(n);
+    }
+    if (doc) {
+      add(doc.source);
+      if (doc.proxy && doc.proxy.sourceName) add(doc.proxy.sourceName);
+    }
+    if (control && control._form && control._form.sourceIn) {
+      add(control._form.sourceIn.value);
+    }
+    return names;
+  }
+
+  function latLonFromNameOrIp(hostname, ip) {
+    var fromMarker = markerLatLonForNode(hostname, ip);
+    if (fromMarker) return fromMarker;
+    var d = findDevice(hostname, ip);
     if (d && d.lat != null && d.lon != null) {
-      return { lat: Number(d.lat), lon: Number(d.lon), hostname: d.node, via: 'source' };
+      return {
+        lat: Number(d.lat),
+        lon: Number(d.lon),
+        hostname: d.node,
+        node: d.node,
+        via: 'map'
+      };
+    }
+    return null;
+  }
+
+  function sourceLatLon(doc) {
+    var names = sourceNameCandidates(doc);
+    for (var i = 0; i < names.length; i++) {
+      var hit = latLonFromNameOrIp(names[i], null);
+      if (hit) {
+        hit.via = hit.via === 'marker' ? 'source-marker' : 'source';
+        return hit;
+      }
+    }
+    // Proxy may only know localnode by IP (name is not on the map).
+    var sip = doc && doc.proxy && doc.proxy.sourceIp;
+    if (sip) {
+      var byIp = latLonFromNameOrIp(null, sip);
+      if (byIp) {
+        byIp.via = 'sourceIp';
+        return byIp;
+      }
     }
     return null;
   }
@@ -392,19 +486,78 @@
     return PATH_COLORS[(Math.max(1, index) - 1) % PATH_COLORS.length];
   }
 
+  function hopDisplayName(hop) {
+    if (!hop) return '*';
+    if (hop.unreachable) return '*';
+    if (hop.hostname && hop.ip && hop.hostname !== hop.ip) {
+      return hop.hostname + ' (' + hop.ip + ')';
+    }
+    return hop.hostname || hop.ip || '*';
+  }
+
+  function vertexDisplayName(vertex) {
+    if (!vertex) return '?';
+    if (vertex.hop) return hopDisplayName(vertex.hop);
+    if (vertex.hostname) return vertex.hostname;
+    if (state.doc && state.doc.source) return String(state.doc.source);
+    return 'source';
+  }
+
+  function wrapVtracePopup(innerHtml) {
+    return '<div class="meshmap-vtrace-popup">' + innerHtml + '</div>';
+  }
+
   function hopPopupHtml(hop, pathIndex) {
     var lines = [
-      '<strong>Path ' + pathIndex + ' · hop ' + (hop.hop != null ? hop.hop : '?') + '</strong>',
-      escapeHtml(hop.hostname || '*') + (hop.ip ? ' (' + escapeHtml(hop.ip) + ')' : '')
+      '<div class="meshmap-vtrace-popup-title">Path ' + pathIndex +
+        ' · hop ' + (hop.hop != null ? hop.hop : '?') + '</div>',
+      '<div><span class="meshmap-vtrace-popup-k">Node</span> ' +
+        escapeHtml(hopDisplayName(hop)) + '</div>'
     ];
-    if (hop.linkType) lines.push('Link: ' + escapeHtml(hop.linkType));
-    if (hop.rttAvgMs != null) {
-      lines.push('RTT avg ' + hop.rttAvgMs + 'ms' + (hop.rttDevMs != null ? ' \u00b1 ' + hop.rttDevMs + 'ms' : ''));
-    } else if (hop.rttMs != null) {
-      lines.push('RTT ' + hop.rttMs + 'ms');
+    if (hop.linkType) {
+      lines.push('<div><span class="meshmap-vtrace-popup-k">Link</span> ' +
+        escapeHtml(hop.linkType) + '</div>');
     }
-    if (hop.unreachable) lines.push('(unreachable)');
-    return lines.join('<br>');
+    lines.push('<div><span class="meshmap-vtrace-popup-k">Delay</span> ' +
+      escapeHtml(hopDelayLabel(hop)) + '</div>');
+    if (hop.unreachable) {
+      lines.push('<div class="meshmap-vtrace-popup-warn">unreachable</div>');
+    }
+    return wrapVtracePopup(lines.join(''));
+  }
+
+  function segmentPopupHtml(path, fromVertex, toVertex, dotted) {
+    var hop = toVertex && toVertex.hop ? toVertex.hop : null;
+    var lines = [];
+    var title = 'Path ' + path.index;
+    if (path.count != null && state.doc && state.doc.runs) {
+      title += ' (' + path.count + '/' + state.doc.runs + ')';
+    }
+    if (fromVertex && fromVertex.isSource && hop && hop.hop != null) {
+      title += ' · source → hop ' + hop.hop;
+    } else if (hop && hop.hop != null) {
+      title += ' · hop ' + hop.hop;
+    }
+    lines.push('<div class="meshmap-vtrace-popup-title">' + escapeHtml(title) + '</div>');
+    lines.push('<div><span class="meshmap-vtrace-popup-k">From</span> ' +
+      escapeHtml(vertexDisplayName(fromVertex)) + '</div>');
+    lines.push('<div><span class="meshmap-vtrace-popup-k">To</span> ' +
+      escapeHtml(vertexDisplayName(toVertex)) + '</div>');
+    if (hop && hop.linkType) {
+      lines.push('<div><span class="meshmap-vtrace-popup-k">Link</span> ' +
+        escapeHtml(hop.linkType) + '</div>');
+    }
+    lines.push('<div><span class="meshmap-vtrace-popup-k">Delay</span> ' +
+      escapeHtml(hop ? hopDelayLabel(hop) : '?') + '</div>');
+    if (dotted) {
+      lines.push('<div class="meshmap-vtrace-popup-warn">via unmapped hop(s)</div>');
+    }
+    if (path.reached === false) {
+      lines.push('<div class="meshmap-vtrace-popup-warn">path unreachable</div>');
+    } else if (hop && hop.unreachable) {
+      lines.push('<div class="meshmap-vtrace-popup-warn">hop unreachable</div>');
+    }
+    return wrapVtracePopup(lines.join(''));
   }
 
   function clearDraw() {
@@ -490,14 +643,38 @@
       return;
     }
     var paths = visiblePaths(doc);
+    var src = sourceLatLon(doc);
+    var sourceMissing = !src && sourceNameCandidates(doc).length > 0;
     paths.forEach(function (path) {
       var color = pathColor(path.index);
       var offsetPx = pathOffsetPx(path, paths);
-      // Build ordered vertices: known lat/lon or null for gaps (unknown hops).
+      // Build ordered vertices: source first, then hops (so source→hop1 is drawn).
       var vertices = [];
-      var src = sourceLatLon(doc);
+      var hopPopupOpts = (typeof meshmapBindPopupOptions === 'function')
+        ? meshmapBindPopupOptions()
+        : {};
       if (src) {
-        vertices.push({ lat: src.lat, lon: src.lon, hop: null, known: true });
+        vertices.push({
+          lat: src.lat,
+          lon: src.lon,
+          hop: null,
+          known: true,
+          isSource: true,
+          hostname: src.hostname || src.node || (doc.source || null)
+        });
+        var srcCircle = L.circleMarker([src.lat, src.lon], {
+          radius: 8,
+          color: color,
+          weight: 2,
+          fillColor: color,
+          fillOpacity: 0.9,
+          opacity: 1
+        });
+        srcCircle.bindPopup(wrapVtracePopup(
+          '<div class="meshmap-vtrace-popup-title">Source</div>' +
+          '<div>' + escapeHtml(src.hostname || src.node || doc.source || 'source') + '</div>'
+        ), hopPopupOpts);
+        traceLayer.addLayer(srcCircle);
       }
       (path.hops || []).forEach(function (hop) {
         var pos = resolveHopLatLon(hop);
@@ -505,6 +682,16 @@
           unresolved.push((hop.hostname || hop.ip || '*') + ' (path ' + path.index + ')');
           vertices.push({ lat: null, lon: null, hop: hop, known: false });
           return;
+        }
+        // Only collapse hop1 into source when it is the same node — not when a
+        // DtD/RF neighbor shares the tower GPS (that still needs source→hop1).
+        if (src && vertices.length === 1 && vertices[0].isSource) {
+          var srcKey = nodeKey(vertices[0].hostname || doc.source);
+          var hopKey = nodeKey(hop.hostname);
+          if (srcKey && hopKey && srcKey === hopKey) {
+            vertices[0].hop = hop;
+            return;
+          }
         }
         vertices.push({ lat: pos.lat, lon: pos.lon, hop: hop, known: true });
         var circle = L.circleMarker([pos.lat, pos.lon], {
@@ -515,13 +702,18 @@
           fillOpacity: 0.95,
           opacity: 1
         });
-        circle.bindPopup(hopPopupHtml(hop, path.index));
+        circle.bindPopup(hopPopupHtml(hop, path.index), hopPopupOpts);
         traceLayer.addLayer(circle);
       });
       drawPathSegments(vertices, color, path, offsetPx);
     });
     var msg = (doc.tool || 'trace') + ': ' + (doc.paths.length) + ' path(s)';
     if (doc.destination) msg += ' → ' + doc.destination;
+    if (src) {
+      msg += ' · from ' + (src.hostname || src.node || doc.source);
+    } else if (sourceMissing) {
+      msg += ' · source not on map (no link to hop 1)';
+    }
     if (unresolved.length) {
       msg += ' · unresolved: ' + unresolved.slice(0, 6).join(', ') +
         (unresolved.length > 6 ? '…' : '');
@@ -617,11 +809,12 @@
     var lastKnown = null;
     vertices.forEach(function (v) {
       if (!v.known) return;
-      if (lastKnown && v.hop) {
+      // Label the inbound link to this hop (including source → hop 1).
+      if (lastKnown && v.hop && !(lastKnown.isSource && lastKnown.hop === v.hop)) {
         var text = hopLabelText(v.hop);
         if (text) {
           var drawn = offsetPolyline(
-            [[lastKnown.lat, lastKnown.lon], [v.lat, v.lon]],
+            ensureVisibleSegment([[lastKnown.lat, lastKnown.lon], [v.lat, v.lon]]),
             offsetPx || 0
           );
           if (drawn && drawn.length >= 2) {
@@ -636,38 +829,51 @@
   }
 
   function drawPathSegments(vertices, color, path, offsetPx) {
-    var solid = [];
+    // One polyline per hop link so click popups can show that segment's from/to/delay.
     var lastKnown = null;
     var pendingGap = false;
-
-    function flushSolid() {
-      if (solid.length >= 2) {
-        addPathLine(solid, color, path, false, offsetPx);
-      }
-      solid = [];
-    }
-
     vertices.forEach(function (v) {
       if (!v.known) {
         pendingGap = true;
-        flushSolid();
         return;
       }
-      var pt = [v.lat, v.lon];
-      if (pendingGap && lastKnown) {
-        addPathLine([lastKnown, pt], color, path, true, offsetPx);
+      if (lastKnown) {
+        addPathLine(
+          [[lastKnown.lat, lastKnown.lon], [v.lat, v.lon]],
+          color,
+          path,
+          pendingGap,
+          offsetPx,
+          lastKnown,
+          v
+        );
         pendingGap = false;
       }
-      solid.push(pt);
-      lastKnown = pt;
+      lastKnown = v;
     });
-    flushSolid();
     drawHopLabels(vertices, color, offsetPx);
   }
 
-  function addPathLine(coords, color, path, dotted, offsetPx) {
+  /** Keep a short stub visible when two hops share GPS (same-tower DtD). */
+  function ensureVisibleSegment(coords) {
+    if (!map || !coords || coords.length < 2) return coords;
+    var a = coords[0];
+    var b = coords[coords.length - 1];
+    if (!a || !b) return coords;
+    var p1 = map.latLngToLayerPoint(L.latLng(a[0], a[1]));
+    var p2 = map.latLngToLayerPoint(L.latLng(b[0], b[1]));
+    var dx = p2.x - p1.x;
+    var dy = p2.y - p1.y;
+    if (Math.sqrt(dx * dx + dy * dy) >= 6) return coords;
+    var ll = map.layerPointToLatLng(L.point(p2.x + 12, p2.y - 12));
+    var out = coords.slice();
+    out[out.length - 1] = [ll.lat, ll.lng];
+    return out;
+  }
+
+  function addPathLine(coords, color, path, dotted, offsetPx, fromVertex, toVertex) {
     if (!coords || coords.length < 2) return;
-    var drawn = offsetPolyline(coords, offsetPx || 0);
+    var drawn = offsetPolyline(ensureVisibleSegment(coords), offsetPx || 0);
     var opts = {
       color: color,
       weight: dotted ? 4 : 5,
@@ -679,14 +885,10 @@
       opts.dashArray = '2, 10';
     }
     var line = L.polyline(drawn, opts);
-    var label = 'Path ' + path.index;
-    if (path.count != null && state.doc && state.doc.runs) {
-      label += ' (' + path.count + '/' + state.doc.runs + ')';
-    }
-    if (dotted) {
-      label += ' (via unmapped hop(s))';
-    }
-    line.bindPopup(escapeHtml(label) + (path.reached === false ? '<br>[unreachable]' : ''));
+    var popupOpts = (typeof meshmapBindPopupOptions === 'function')
+      ? meshmapBindPopupOptions()
+      : {};
+    line.bindPopup(segmentPopupHtml(path, fromVertex, toVertex, dotted), popupOpts);
     traceLayer.addLayer(line);
   }
 
@@ -949,6 +1151,11 @@
   function applyDoc(doc, rawText, opts) {
     opts = opts || {};
     state.doc = doc;
+    // Prefer an explicit source so source→hop1 can be drawn on the map.
+    if (doc && !doc.source && control && control._form && control._form.sourceIn) {
+      var formSrc = control._form.sourceIn.value.trim();
+      if (formSrc) doc.source = nodeKey(formSrc);
+    }
     if (rawText != null && String(rawText).trim()) {
       state.rawText = String(rawText);
     } else {
@@ -1760,6 +1967,20 @@
     }
   }
 
+  function onSpiderfyGeometryChange() {
+    if (state.doc && state.doc.paths && state.doc.paths.length) {
+      drawDoc();
+    }
+  }
+
+  function bindSpiderfyRedraw() {
+    if (typeof oms === 'undefined' || !oms || typeof oms.addListener !== 'function') return;
+    if (oms._meshmapVtraceSpiderfyBound) return;
+    oms._meshmapVtraceSpiderfyBound = true;
+    oms.addListener('activate', onSpiderfyGeometryChange);
+    oms.addListener('deactivate', onSpiderfyGeometryChange);
+  }
+
   function init(mapInstance, allDevices, info) {
     map = mapInstance;
     mapInfo = info || {};
@@ -1780,6 +2001,7 @@
     map.on('overlayadd', onOverlayAdd);
     map.on('overlayremove', onOverlayRemove);
     map.on('zoomend', onZoomOrMoveEnd);
+    bindSpiderfyRedraw();
     restoreSession();
     if (!readSavedSession() && mapInfo && mapInfo.localnode && control._form && control._form.sourceIn) {
       if (!control._form.sourceIn.value) {
@@ -1794,6 +2016,9 @@
     layer: traceLayer,
     LAYER_NAME: LAYER_NAME,
     init: init,
-    parsePaste: parsePaste
+    parsePaste: parsePaste,
+    redraw: function () {
+      if (state.doc) drawDoc();
+    }
   };
 })(window);
