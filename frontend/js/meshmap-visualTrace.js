@@ -51,7 +51,9 @@
     showHop: false,
     showDelay: false,
     consoleMinimized: false,
-    panelOpen: false
+    panelOpen: false,
+    modeTab: 'paste', // 'paste' | 'live'
+    optionsMinimized: true
   };
 
   function saveSession() {
@@ -71,6 +73,8 @@
       showDelay: !!state.showDelay,
       consoleMinimized: !!state.consoleMinimized,
       panelOpen: !!state.panelOpen,
+      modeTab: state.modeTab === 'live' ? 'live' : 'paste',
+      optionsMinimized: !!state.optionsMinimized,
       selected: state.selected,
       status: state.status || '',
       rawText: state.rawText || '',
@@ -1549,6 +1553,11 @@
         var panel = L.DomUtil.create('div', 'meshmap-vtrace-panel', root);
         panel.innerHTML =
           '<div class="meshmap-vtrace-header">Visual Traceroute</div>' +
+          '<div class="meshmap-vtrace-tabs" role="tablist">' +
+          '<button type="button" class="meshmap-vtrace-tab" data-tab="paste" role="tab" aria-selected="true">Paste</button>' +
+          '<button type="button" class="meshmap-vtrace-tab" data-tab="live" role="tab" aria-selected="false">Live</button>' +
+          '</div>' +
+          '<div class="meshmap-vtrace-tabpanel" data-tabpanel="paste" role="tabpanel">' +
           '<label class="meshmap-vtrace-field">Paste report (JSON or text)' +
           '<textarea class="meshmap-vtrace-paste" rows="5" spellcheck="false" ' +
           'placeholder="Paste aredn-traceroute / stableroute output or JSON"></textarea></label>' +
@@ -1556,8 +1565,8 @@
           '<button type="button" class="meshmap-vtrace-parse">Parse / Draw</button>' +
           '<button type="button" class="meshmap-vtrace-clear">Clear</button>' +
           '</div>' +
-          '<hr class="meshmap-vtrace-hr">' +
-          '<div class="meshmap-vtrace-subheader">Run live</div>' +
+          '</div>' +
+          '<div class="meshmap-vtrace-tabpanel" data-tabpanel="live" role="tabpanel" hidden>' +
           '<label class="meshmap-vtrace-field">Tool' +
           '<select class="meshmap-vtrace-tool">' +
           '<option value="traceroute">traceroute</option>' +
@@ -1572,12 +1581,20 @@
           '<datalist id="meshmap-vtrace-nodes"></datalist>' +
           '<div class="meshmap-vtrace-row">' +
           '<button type="button" class="meshmap-vtrace-direct" hidden>Run</button>' +
+          '<button type="button" class="meshmap-vtrace-clear-live">Clear</button>' +
           '</div>' +
           '<div class="meshmap-vtrace-progress" hidden>' +
           '<div class="meshmap-vtrace-progress-label"></div>' +
           '<div class="meshmap-vtrace-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">' +
           '<div class="meshmap-vtrace-progress-bar"></div>' +
           '</div></div>' +
+          '</div>' +
+          '<div class="meshmap-vtrace-options' + (state.optionsMinimized ? ' meshmap-vtrace-options-min' : '') + '">' +
+          '<button type="button" class="meshmap-vtrace-options-toggle" aria-expanded="' +
+          (state.optionsMinimized ? 'false' : 'true') + '">' +
+          '<span class="meshmap-vtrace-options-caret" aria-hidden="true"></span>' +
+          'Options</button>' +
+          '<div class="meshmap-vtrace-options-body">' +
           '<label class="meshmap-vtrace-check">' +
           '<input type="checkbox" class="meshmap-vtrace-hide-links"> Hide map links while tracing</label>' +
           '<label class="meshmap-vtrace-check">' +
@@ -1588,6 +1605,7 @@
           '<input type="checkbox" class="meshmap-vtrace-show-hop"> Show Hop</label>' +
           '<label class="meshmap-vtrace-check">' +
           '<input type="checkbox" class="meshmap-vtrace-show-delay"> Show Delay</label>' +
+          '</div></div>' +
           '<div class="meshmap-vtrace-subheader">Paths</div>' +
           '<div class="meshmap-vtrace-paths"></div>' +
           '<div class="meshmap-vtrace-status"></div>';
@@ -1607,6 +1625,7 @@
         var paste = panel.querySelector('.meshmap-vtrace-paste');
         var parseBtn = panel.querySelector('.meshmap-vtrace-parse');
         var clearBtn = panel.querySelector('.meshmap-vtrace-clear');
+        var clearLiveBtn = panel.querySelector('.meshmap-vtrace-clear-live');
         var toolSel = panel.querySelector('.meshmap-vtrace-tool');
         var sourceIn = panel.querySelector('.meshmap-vtrace-source');
         var destIn = panel.querySelector('.meshmap-vtrace-dest');
@@ -1625,6 +1644,10 @@
         var pathsBox = panel.querySelector('.meshmap-vtrace-paths');
         var statusEl = panel.querySelector('.meshmap-vtrace-status');
         var list = panel.querySelector('#meshmap-vtrace-nodes');
+        var tabBtns = panel.querySelectorAll('.meshmap-vtrace-tab');
+        var tabPanels = panel.querySelectorAll('.meshmap-vtrace-tabpanel');
+        var optionsBox = panel.querySelector('.meshmap-vtrace-options');
+        var optionsToggle = panel.querySelector('.meshmap-vtrace-options-toggle');
         var consoleToggle = consoleEl.querySelector('.meshmap-vtrace-console-toggle');
         var consoleCopy = consoleEl.querySelector('.meshmap-vtrace-console-copy');
         var consoleBody = consoleEl.querySelector('.meshmap-vtrace-console-body');
@@ -1639,6 +1662,9 @@
         }
         if (onMeshHost()) {
           directBtn.hidden = false;
+          if (state.modeTab !== 'paste' && state.modeTab !== 'live') {
+            state.modeTab = 'live';
+          }
         }
 
         this._panel = panel;
@@ -1653,6 +1679,8 @@
         this._consoleBody = consoleBody;
         this._consoleToggle = consoleToggle;
         this._togglePanel = function (open, opts) { togglePanel(open, opts); };
+        this._setModeTab = setModeTab;
+        this._setOptionsMinimized = setOptionsMinimized;
         this._form = {
           paste: paste,
           toolSel: toolSel,
@@ -1671,6 +1699,41 @@
           nWrap.hidden = toolSel.value !== 'stableroute';
         }
         syncRunsVisibility();
+
+        function setModeTab(tab, opts) {
+          opts = opts || {};
+          var next = tab === 'live' ? 'live' : 'paste';
+          state.modeTab = next;
+          for (var i = 0; i < tabBtns.length; i++) {
+            var active = tabBtns[i].getAttribute('data-tab') === next;
+            tabBtns[i].setAttribute('aria-selected', active ? 'true' : 'false');
+            if (active) {
+              L.DomUtil.addClass(tabBtns[i], 'meshmap-vtrace-tab-active');
+            } else {
+              L.DomUtil.removeClass(tabBtns[i], 'meshmap-vtrace-tab-active');
+            }
+          }
+          for (var j = 0; j < tabPanels.length; j++) {
+            tabPanels[j].hidden = tabPanels[j].getAttribute('data-tabpanel') !== next;
+          }
+          if (!opts.skipSave) saveSession();
+        }
+
+        function setOptionsMinimized(min, opts) {
+          opts = opts || {};
+          state.optionsMinimized = !!min;
+          if (state.optionsMinimized) {
+            L.DomUtil.addClass(optionsBox, 'meshmap-vtrace-options-min');
+          } else {
+            L.DomUtil.removeClass(optionsBox, 'meshmap-vtrace-options-min');
+          }
+          optionsToggle.setAttribute('aria-expanded', state.optionsMinimized ? 'false' : 'true');
+          if (!opts.skipSave) saveSession();
+        }
+
+        // Default: Live on mesh hosts when no saved tab yet (restore may override).
+        setModeTab(onMeshHost() ? 'live' : 'paste', { skipSave: true });
+        setOptionsMinimized(true, { skipSave: true });
 
         function togglePanel(open, opts) {
           opts = opts || {};
@@ -1696,6 +1759,17 @@
           if (open) {
             ensureLayerOn();
           }
+        });
+
+        for (var ti = 0; ti < tabBtns.length; ti++) {
+          tabBtns[ti].addEventListener('click', function (ev) {
+            var tab = ev.currentTarget.getAttribute('data-tab');
+            setModeTab(tab);
+          });
+        }
+
+        optionsToggle.addEventListener('click', function () {
+          setOptionsMinimized(!state.optionsMinimized);
         });
 
         hideLinksCb.checked = !!state.hideLinks;
@@ -1826,7 +1900,7 @@
             setStatus(String(err.message || err));
           }
         });
-        clearBtn.addEventListener('click', function () {
+        function clearTraceUi() {
           state.doc = null;
           state.rawText = '';
           state.selected = 'all';
@@ -1837,7 +1911,9 @@
           updateConsole();
           applyHideLinks();
           saveSession();
-        });
+        }
+        clearBtn.addEventListener('click', clearTraceUi);
+        if (clearLiveBtn) clearLiveBtn.addEventListener('click', clearTraceUi);
 
         async function doRun(direct) {
           var tool = toolSel.value;
@@ -1931,6 +2007,18 @@
       }
       if (typeof saved.consoleMinimized === 'boolean') {
         state.consoleMinimized = saved.consoleMinimized;
+      }
+      if (saved.modeTab === 'live' || saved.modeTab === 'paste') {
+        state.modeTab = saved.modeTab;
+        if (typeof control._setModeTab === 'function') {
+          control._setModeTab(state.modeTab, { skipSave: true });
+        }
+      }
+      if (typeof saved.optionsMinimized === 'boolean') {
+        state.optionsMinimized = saved.optionsMinimized;
+        if (typeof control._setOptionsMinimized === 'function') {
+          control._setOptionsMinimized(state.optionsMinimized, { skipSave: true });
+        }
       }
       if (saved.selected != null) {
         state.selected = saved.selected;
