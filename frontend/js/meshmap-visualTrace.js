@@ -707,6 +707,8 @@
       });
       drawPathSegments(vertices, color, path, offsetPx);
     });
+    bringTraceToFront();
+    applyMapLinkOverlayState();
     var msg = (doc.tool || 'trace') + ': ' + (doc.paths.length) + ' path(s)';
     if (doc.destination) msg += ' → ' + doc.destination;
     if (src) {
@@ -958,7 +960,18 @@
     ].filter(Boolean);
   }
 
-  function setMapLinksVisible(show) {
+  function hasActiveTrace() {
+    return !!(state.doc && state.doc.paths && state.doc.paths.length &&
+      map && map.hasLayer(traceLayer));
+  }
+
+  /**
+   * While a visual traceroute is on the map, mesh RF/DtD links must not steal
+   * clicks (their "node — node" popups). Visibility still follows Hide map links.
+   */
+  function applyMapLinkOverlayState() {
+    var active = hasActiveTrace();
+    var hideVisually = !!(state.hideLinks && active);
     allLinkLayers().forEach(function (layer) {
       if (!layer || typeof layer.eachLayer !== 'function') return;
       layer.eachLayer(function (line) {
@@ -968,16 +981,41 @@
             line.options.opacity != null ? line.options.opacity : 0.8;
         }
         line.setStyle({
-          opacity: show ? line.options.meshmapBaseOpacity : 0,
-          interactive: !!show
+          opacity: hideVisually ? 0 : line.options.meshmapBaseOpacity,
+          interactive: !active
+        });
+      });
+    });
+  }
+
+  function restoreMapLinkClicks() {
+    allLinkLayers().forEach(function (layer) {
+      if (!layer || typeof layer.eachLayer !== 'function') return;
+      layer.eachLayer(function (line) {
+        if (!line || !line.options || typeof line.setStyle !== 'function') return;
+        if (line.options.meshmapBaseOpacity === undefined) {
+          line.options.meshmapBaseOpacity =
+            line.options.opacity != null ? line.options.opacity : 0.8;
+        }
+        line.setStyle({
+          opacity: line.options.meshmapBaseOpacity,
+          interactive: true
         });
       });
     });
   }
 
   function applyHideLinks() {
-    var shouldHide = !!(state.hideLinks && state.doc && state.doc.paths && state.doc.paths.length);
-    setMapLinksVisible(!shouldHide);
+    applyMapLinkOverlayState();
+  }
+
+  function bringTraceToFront() {
+    if (!traceLayer || typeof traceLayer.eachLayer !== 'function') return;
+    traceLayer.eachLayer(function (layer) {
+      if (layer && typeof layer.bringToFront === 'function') {
+        layer.bringToFront();
+      }
+    });
   }
 
   function formatHopText(hop) {
@@ -1957,7 +1995,8 @@
     if (syncingLayer) return;
     if (e.name === LAYER_NAME || e.layer === traceLayer) {
       clearDraw();
-      setMapLinksVisible(true);
+      // Layer is off: restore normal mesh-link clicks even if a doc remains.
+      restoreMapLinkClicks();
       state.panelOpen = false;
       if (control && control._panel) {
         L.DomUtil.removeClass(control._container, 'meshmap-vtrace-expanded');
