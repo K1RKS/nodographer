@@ -48,6 +48,8 @@
     hideLinks: true,
     offsetPaths: true,
     autoCenter: true,
+    showHop: false,
+    showDelay: false,
     consoleMinimized: false,
     panelOpen: false
   };
@@ -65,6 +67,8 @@
       hideLinks: !!state.hideLinks,
       offsetPaths: !!state.offsetPaths,
       autoCenter: !!state.autoCenter,
+      showHop: !!state.showHop,
+      showDelay: !!state.showDelay,
       consoleMinimized: !!state.consoleMinimized,
       panelOpen: !!state.panelOpen,
       selected: state.selected,
@@ -572,6 +576,58 @@
    * Draw solid segments between consecutive known hops; when unknowns sit
    * between two known hops, draw a dotted chord so the path still looks complete.
    */
+  function hopLabelText(hop) {
+    if (!hop || (!state.showHop && !state.showDelay)) return '';
+    var hopNum = hop.hop != null ? String(hop.hop) : '?';
+    var delay = hop.rttAvgMs != null ? hop.rttAvgMs : hop.rttMs;
+    var delayStr = delay != null && isFinite(Number(delay))
+      ? (Math.round(Number(delay)) + 'ms')
+      : '?';
+    if (state.showHop && state.showDelay) return hopNum + ' : ' + delayStr;
+    if (state.showHop) return hopNum;
+    return delayStr;
+  }
+
+  function addHopLabel(latlng, text, color) {
+    if (!text || !latlng) return;
+    var icon = L.divIcon({
+      className: 'meshmap-vtrace-hop-label',
+      html: '<span style="border-color:' + color + ';">' + escapeHtml(text) + '</span>',
+      iconSize: [0, 0],
+      iconAnchor: [0, 0]
+    });
+    var marker = L.marker(latlng, {
+      icon: icon,
+      interactive: false,
+      keyboard: false,
+      zIndexOffset: 400
+    });
+    traceLayer.addLayer(marker);
+  }
+
+  function drawHopLabels(vertices, color, offsetPx) {
+    if (!state.showHop && !state.showDelay) return;
+    var lastKnown = null;
+    vertices.forEach(function (v) {
+      if (!v.known) return;
+      if (lastKnown && v.hop) {
+        var text = hopLabelText(v.hop);
+        if (text) {
+          var drawn = offsetPolyline(
+            [[lastKnown.lat, lastKnown.lon], [v.lat, v.lon]],
+            offsetPx || 0
+          );
+          if (drawn && drawn.length >= 2) {
+            var a = drawn[0];
+            var b = drawn[drawn.length - 1];
+            addHopLabel(L.latLng((a[0] + b[0]) / 2, (a[1] + b[1]) / 2), text, color);
+          }
+        }
+      }
+      lastKnown = v;
+    });
+  }
+
   function drawPathSegments(vertices, color, path, offsetPx) {
     var solid = [];
     var lastKnown = null;
@@ -599,6 +655,7 @@
       lastKnown = pt;
     });
     flushSolid();
+    drawHopLabels(vertices, color, offsetPx);
   }
 
   function addPathLine(coords, color, path, dotted, offsetPx) {
@@ -1279,6 +1336,10 @@
           '<input type="checkbox" class="meshmap-vtrace-offset-paths"> Offset overlapping paths</label>' +
           '<label class="meshmap-vtrace-check">' +
           '<input type="checkbox" class="meshmap-vtrace-auto-center"> Auto center map</label>' +
+          '<label class="meshmap-vtrace-check">' +
+          '<input type="checkbox" class="meshmap-vtrace-show-hop"> Show Hop</label>' +
+          '<label class="meshmap-vtrace-check">' +
+          '<input type="checkbox" class="meshmap-vtrace-show-delay"> Show Delay</label>' +
           '<div class="meshmap-vtrace-subheader">Paths</div>' +
           '<div class="meshmap-vtrace-paths"></div>' +
           '<div class="meshmap-vtrace-status"></div>';
@@ -1308,6 +1369,8 @@
         var hideLinksCb = panel.querySelector('.meshmap-vtrace-hide-links');
         var offsetPathsCb = panel.querySelector('.meshmap-vtrace-offset-paths');
         var autoCenterCb = panel.querySelector('.meshmap-vtrace-auto-center');
+        var showHopCb = panel.querySelector('.meshmap-vtrace-show-hop');
+        var showDelayCb = panel.querySelector('.meshmap-vtrace-show-delay');
         var progressWrap = panel.querySelector('.meshmap-vtrace-progress');
         var progressLabel = panel.querySelector('.meshmap-vtrace-progress-label');
         var progressTrack = panel.querySelector('.meshmap-vtrace-progress-track');
@@ -1353,7 +1416,9 @@
           nWrap: nWrap,
           hideLinksCb: hideLinksCb,
           offsetPathsCb: offsetPathsCb,
-          autoCenterCb: autoCenterCb
+          autoCenterCb: autoCenterCb,
+          showHopCb: showHopCb,
+          showDelayCb: showDelayCb
         };
 
         function syncRunsVisibility() {
@@ -1405,6 +1470,20 @@
         autoCenterCb.addEventListener('change', function () {
           state.autoCenter = !!autoCenterCb.checked;
           if (state.autoCenter && state.doc) fitMapToTrace();
+          saveSession();
+        });
+
+        showHopCb.checked = !!state.showHop;
+        showHopCb.addEventListener('change', function () {
+          state.showHop = !!showHopCb.checked;
+          if (state.doc) drawDoc();
+          saveSession();
+        });
+
+        showDelayCb.checked = !!state.showDelay;
+        showDelayCb.addEventListener('change', function () {
+          state.showDelay = !!showDelayCb.checked;
+          if (state.doc) drawDoc();
           saveSession();
         });
 
@@ -1596,6 +1675,14 @@
       if (typeof saved.autoCenter === 'boolean') {
         state.autoCenter = saved.autoCenter;
         if (form.autoCenterCb) form.autoCenterCb.checked = state.autoCenter;
+      }
+      if (typeof saved.showHop === 'boolean') {
+        state.showHop = saved.showHop;
+        if (form.showHopCb) form.showHopCb.checked = state.showHop;
+      }
+      if (typeof saved.showDelay === 'boolean') {
+        state.showDelay = saved.showDelay;
+        if (form.showDelayCb) form.showDelayCb.checked = state.showDelay;
       }
       if (typeof saved.consoleMinimized === 'boolean') {
         state.consoleMinimized = saved.consoleMinimized;
