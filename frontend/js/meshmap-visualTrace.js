@@ -1271,9 +1271,6 @@
 
   function setBusy(busy) {
     state.busy = !!busy;
-    if (control && control._runBtn) {
-      control._runBtn.disabled = state.busy;
-    }
     if (control && control._directBtn) {
       control._directBtn.disabled = state.busy;
     }
@@ -1574,8 +1571,7 @@
           '<input type="number" class="meshmap-vtrace-n" min="1" max="20" value="5"></label>' +
           '<datalist id="meshmap-vtrace-nodes"></datalist>' +
           '<div class="meshmap-vtrace-row">' +
-          '<button type="button" class="meshmap-vtrace-run">Run via meshinfo</button>' +
-          '<button type="button" class="meshmap-vtrace-direct" hidden>Run direct</button>' +
+          '<button type="button" class="meshmap-vtrace-direct" hidden>Run</button>' +
           '</div>' +
           '<div class="meshmap-vtrace-progress" hidden>' +
           '<div class="meshmap-vtrace-progress-label"></div>' +
@@ -1616,7 +1612,6 @@
         var destIn = panel.querySelector('.meshmap-vtrace-dest');
         var nWrap = panel.querySelector('.meshmap-vtrace-n-wrap');
         var nIn = panel.querySelector('.meshmap-vtrace-n');
-        var runBtn = panel.querySelector('.meshmap-vtrace-run');
         var directBtn = panel.querySelector('.meshmap-vtrace-direct');
         var hideLinksCb = panel.querySelector('.meshmap-vtrace-hide-links');
         var offsetPathsCb = panel.querySelector('.meshmap-vtrace-offset-paths');
@@ -1649,7 +1644,6 @@
         this._panel = panel;
         this._status = statusEl;
         this._paths = pathsBox;
-        this._runBtn = runBtn;
         this._directBtn = directBtn;
         this._progress = progressWrap;
         this._progressLabel = progressLabel;
@@ -1881,7 +1875,6 @@
             setBusy(false);
           }
         }
-        runBtn.addEventListener('click', function () { doRun(false); });
         directBtn.addEventListener('click', function () { doRun(true); });
 
         updateConsole();
