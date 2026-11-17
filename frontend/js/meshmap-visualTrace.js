@@ -39,6 +39,8 @@
   var restoringSession = false;
   var progressTimer = null;
   var progressStartedAt = 0;
+  /** @type {Object.<string, boolean>} nodeKey -> supports stableroute CGI */
+  var stablerouteSupportCache = {};
   var state = {
     doc: null,
     rawText: '',
@@ -1129,6 +1131,42 @@
     }
   }
 
+  /**
+   * Probe whether source has /cgi-bin/stableroute (package installed).
+   * Returns true/false, or null when the check could not be completed.
+   */
+  async function probeStablerouteSupport(source) {
+    var key = nodeKey(source);
+    if (!key) return null;
+    if (Object.prototype.hasOwnProperty.call(stablerouteSupportCache, key)) {
+      return !!stablerouteSupportCache[key];
+    }
+    if (!onMeshHost()) return null;
+    var url = 'http://' + key + '.local.mesh/cgi-bin/stableroute';
+    try {
+      var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      var timer = null;
+      if (ctrl) {
+        timer = setTimeout(function () {
+          try { ctrl.abort(); } catch (e) { /* ignore */ }
+        }, 4500);
+      }
+      var resp = await fetch(url, {
+        method: 'GET',
+        cache: 'no-store',
+        signal: ctrl ? ctrl.signal : undefined
+      });
+      if (timer) clearTimeout(timer);
+      // Missing CGI is 404; installed package answers even without a destination.
+      var ok = resp.status !== 404;
+      stablerouteSupportCache[key] = ok;
+      return ok;
+    } catch (err) {
+      // Unreachable / aborted / network — unknown; do not cache as false.
+      return null;
+    }
+  }
+
   function allLinkLayers() {
     return [
       window.twoLinksTX, window.twoLinksThp, window.twoLinksSnR, window.twoLinksCost, window.twoLinksQual,
@@ -1892,6 +1930,7 @@
         this._togglePanel = function (open, opts) { togglePanel(open, opts); };
         this._setModeTab = setModeTab;
         this._setOptionsMinimized = setOptionsMinimized;
+        this._refreshStablerouteAvailability = refreshStablerouteAvailability;
         this._form = {
           paste: paste,
           toolSel: toolSel,
@@ -1911,6 +1950,54 @@
         }
         syncRunsVisibility();
 
+        var stablerouteOpt = toolSel.querySelector('option[value="stableroute"]');
+        var sourceProbeTimer = null;
+        var sourceProbeToken = 0;
+
+        function setStablerouteToolAvailable(available) {
+          if (!stablerouteOpt) return;
+          stablerouteOpt.hidden = !available;
+          stablerouteOpt.disabled = !available;
+        }
+
+        function forceToolTraceroute() {
+          toolSel.value = 'traceroute';
+          syncRunsVisibility();
+          if (!restoringSession) saveSession();
+        }
+
+        async function refreshStablerouteAvailability(opts) {
+          opts = opts || {};
+          var source = sourceIn.value.trim();
+          var token = ++sourceProbeToken;
+          if (!source || !onMeshHost()) {
+            setStablerouteToolAvailable(true);
+            return;
+          }
+          var supported = await probeStablerouteSupport(source);
+          if (token !== sourceProbeToken) return;
+          if (supported === null) {
+            // Could not check — leave stableroute selectable.
+            setStablerouteToolAvailable(true);
+            return;
+          }
+          setStablerouteToolAvailable(supported);
+          if (!supported && toolSel.value === 'stableroute') {
+            if (!opts.silent) {
+              window.alert('The stableroute APK needs to be installed on the source.');
+            }
+            forceToolTraceroute();
+          }
+        }
+
+        function scheduleStablerouteCheck() {
+          if (sourceProbeTimer) clearTimeout(sourceProbeTimer);
+          sourceProbeTimer = setTimeout(function () {
+            sourceProbeTimer = null;
+            refreshStablerouteAvailability();
+          }, 350);
+        }
+
         function setModeTab(tab, opts) {
           opts = opts || {};
           var next = tab === 'live' ? 'live' : 'paste';
@@ -1927,6 +2014,7 @@
           for (var j = 0; j < tabPanels.length; j++) {
             tabPanels[j].hidden = tabPanels[j].getAttribute('data-tabpanel') !== next;
           }
+          if (next === 'live') refreshStablerouteAvailability({ silent: !!opts.skipSave });
           if (!opts.skipSave) saveSession();
         }
 
@@ -1960,6 +2048,7 @@
             // Icon is the enable switch (no longer in the layer picker).
             ensureLayerOn();
             if (state.doc) drawDoc();
+            refreshStablerouteAvailability({ silent: !!opts.skipSave });
           } else {
             L.DomUtil.removeClass(root, 'meshmap-vtrace-expanded');
             L.DomUtil.removeClass(panel, 'meshmap-vtrace-panel-open');
@@ -2066,10 +2155,20 @@
         }
         toolSel.addEventListener('change', function () {
           syncRunsVisibility();
+          if (toolSel.value === 'stableroute') {
+            refreshStablerouteAvailability();
+          }
           persistFormFields();
         });
-        sourceIn.addEventListener('change', persistFormFields);
-        sourceIn.addEventListener('blur', persistFormFields);
+        sourceIn.addEventListener('change', function () {
+          scheduleStablerouteCheck();
+          persistFormFields();
+        });
+        sourceIn.addEventListener('blur', function () {
+          scheduleStablerouteCheck();
+          persistFormFields();
+        });
+        sourceIn.addEventListener('input', scheduleStablerouteCheck);
         destIn.addEventListener('change', persistFormFields);
         destIn.addEventListener('blur', persistFormFields);
         nIn.addEventListener('change', persistFormFields);
@@ -2311,6 +2410,9 @@
       }
     } finally {
       restoringSession = false;
+    }
+    if (control && typeof control._refreshStablerouteAvailability === 'function') {
+      control._refreshStablerouteAvailability();
     }
   }
 
