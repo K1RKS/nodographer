@@ -51,6 +51,7 @@
     showHop: false,
     showDelay: false,
     consoleMinimized: false,
+    consoleHidden: false,
     panelOpen: false,
     modeTab: 'paste', // 'paste' | 'live'
     optionsMinimized: true,
@@ -74,6 +75,7 @@
       showHop: !!state.showHop,
       showDelay: !!state.showDelay,
       consoleMinimized: !!state.consoleMinimized,
+      consoleHidden: !!state.consoleHidden,
       panelOpen: !!state.panelOpen,
       modeTab: state.modeTab === 'live' ? 'live' : 'paste',
       optionsMinimized: !!state.optionsMinimized,
@@ -1346,8 +1348,8 @@
         '<pre class="meshmap-vtrace-console-plain">(no report loaded)</pre>';
     }
     if (control._console) {
-      // Trace report follows Visual Traceroute: only while the tool panel is on.
-      var show = !!(state.panelOpen && (hasDoc || text));
+      // Trace report follows Visual Traceroute, unless the user closed it with ×.
+      var show = !!(state.panelOpen && !state.consoleHidden && (hasDoc || text));
       if (show && !state.consoleMinimized) {
         L.DomUtil.addClass(control._console, 'meshmap-vtrace-console-open');
         L.DomUtil.removeClass(control._console, 'meshmap-vtrace-console-min');
@@ -1359,8 +1361,15 @@
         L.DomUtil.removeClass(control._console, 'meshmap-vtrace-console-min');
       }
       if (control._consoleToggle) {
-        control._consoleToggle.textContent = state.consoleMinimized ? 'Show' : 'Minimize';
-        control._consoleToggle.setAttribute('aria-expanded', state.consoleMinimized ? 'false' : 'true');
+        var minimized = !!state.consoleMinimized;
+        control._consoleToggle.setAttribute('aria-expanded', minimized ? 'false' : 'true');
+        control._consoleToggle.setAttribute('aria-label', minimized ? 'Expand' : 'Minimize');
+        control._consoleToggle.title = minimized ? 'Expand' : 'Minimize';
+        if (minimized) {
+          L.DomUtil.addClass(control._consoleToggle, 'meshmap-vtrace-console-toggle-expand');
+        } else {
+          L.DomUtil.removeClass(control._consoleToggle, 'meshmap-vtrace-console-toggle-expand');
+        }
       }
     }
   }
@@ -1801,8 +1810,16 @@
           '<div class="meshmap-vtrace-console-bar meshmap-vtrace-drag-handle" title="Drag to move">' +
           '<span class="meshmap-vtrace-console-title">Trace report</span>' +
           '<span class="meshmap-vtrace-console-actions">' +
-          '<button type="button" class="meshmap-vtrace-console-copy">Copy</button>' +
-          '<button type="button" class="meshmap-vtrace-console-toggle" aria-expanded="true">Minimize</button>' +
+          '<button type="button" class="meshmap-vtrace-console-copy" title="Copy">Copy</button>' +
+          '<button type="button" class="meshmap-vtrace-console-toggle" title="Minimize" ' +
+          'aria-label="Minimize" aria-expanded="true">' +
+          // Windows-style caption glyphs: underscore = minimize, square = restore/expand
+          '<svg class="meshmap-vtrace-console-icon meshmap-vtrace-console-icon-min" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true" focusable="false">' +
+          '<rect x="1" y="7.5" width="8" height="1.2" fill="currentColor"/></svg>' +
+          '<svg class="meshmap-vtrace-console-icon meshmap-vtrace-console-icon-max" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true" focusable="false">' +
+          '<rect x="1.2" y="1.2" width="7.6" height="7.6" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>' +
+          '</button>' +
+          '<button type="button" class="meshmap-vtrace-console-close" title="Close" aria-label="Close">×</button>' +
           '</span>' +
           '</div>' +
           '<div class="meshmap-vtrace-console-body">' +
@@ -1838,6 +1855,7 @@
         var optionsToggle = panel.querySelector('.meshmap-vtrace-options-toggle');
         var consoleBar = consoleEl.querySelector('.meshmap-vtrace-console-bar');
         var consoleToggle = consoleEl.querySelector('.meshmap-vtrace-console-toggle');
+        var consoleClose = consoleEl.querySelector('.meshmap-vtrace-console-close');
         var consoleCopy = consoleEl.querySelector('.meshmap-vtrace-console-copy');
         var consoleBody = consoleEl.querySelector('.meshmap-vtrace-console-body');
 
@@ -2035,6 +2053,13 @@
           updateConsole();
           saveSession();
         });
+        if (consoleClose) {
+          consoleClose.addEventListener('click', function () {
+            state.consoleHidden = true;
+            updateConsole();
+            saveSession();
+          });
+        }
 
         function persistFormFields() {
           saveSession();
@@ -2152,6 +2177,9 @@
           state.doc = null;
           state.rawText = '';
           state.selected = 'all';
+          // A new live run brings the Trace report back if the user closed it.
+          state.consoleHidden = false;
+          state.consoleMinimized = false;
           paste.value = '';
           clearDraw();
           renderPathControls();
@@ -2166,6 +2194,7 @@
               ? await runDirect(tool, source, destination, n, progress)
               : await runViaMeshinfo(tool, source, destination, n);
             stopProgress();
+            state.consoleHidden = false;
             applyDoc(doc);
           } catch (err) {
             stopProgress();
@@ -2230,6 +2259,9 @@
       }
       if (typeof saved.consoleMinimized === 'boolean') {
         state.consoleMinimized = saved.consoleMinimized;
+      }
+      if (typeof saved.consoleHidden === 'boolean') {
+        state.consoleHidden = saved.consoleHidden;
       }
       if (saved.modeTab === 'live' || saved.modeTab === 'paste') {
         state.modeTab = saved.modeTab;

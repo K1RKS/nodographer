@@ -417,8 +417,7 @@
 	flex: 0 0 auto;
 }
 
-.meshmap-vtrace-console-copy,
-.meshmap-vtrace-console-toggle {
+.meshmap-vtrace-console-copy {
 	flex: 0 0 auto;
 	padding: 3px 8px;
 	border: 1px solid #999;
@@ -428,9 +427,48 @@
 	font-size: 11px;
 }
 
+.meshmap-vtrace-console-toggle,
+.meshmap-vtrace-console-close {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	min-width: 26px;
+	height: 26px;
+	padding: 0;
+	border: 1px solid #999;
+	border-radius: 3px;
+	background: #fff;
+	cursor: pointer;
+	font-size: 16px;
+	font-weight: 600;
+	line-height: 1;
+	color: #444;
+}
+
 .meshmap-vtrace-console-copy:hover,
-.meshmap-vtrace-console-toggle:hover {
+.meshmap-vtrace-console-toggle:hover,
+.meshmap-vtrace-console-close:hover {
 	background: #ebebeb;
+}
+
+.meshmap-vtrace-console-icon {
+	display: block;
+	pointer-events: none;
+	overflow: visible;
+}
+
+.meshmap-vtrace-console-icon-max {
+	display: none;
+}
+
+.meshmap-vtrace-console-toggle-expand .meshmap-vtrace-console-icon-min {
+	display: none;
+}
+
+.meshmap-vtrace-console-toggle-expand .meshmap-vtrace-console-icon-max {
+	display: block;
 }
 
 .meshmap-vtrace-console-body {
@@ -633,11 +671,18 @@
 		font-size: 13px;
 	}
 
-	.meshmap-vtrace-console-copy,
-	.meshmap-vtrace-console-toggle {
+	.meshmap-vtrace-console-copy {
 		min-height: 36px;
 		padding: 6px 10px;
 		font-size: 13px;
+	}
+
+	.meshmap-vtrace-console-toggle,
+	.meshmap-vtrace-console-close {
+		width: 36px;
+		min-width: 36px;
+		height: 36px;
+		font-size: 20px;
 	}
 
 	.meshmap-vtrace-console-body {
