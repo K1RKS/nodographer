@@ -18,14 +18,14 @@
 	color: #c62828;
 }
 
-/* Floating map overlay (draggable) */
+/* Floating map overlay (draggable); default lower-right clears top-right legend */
 .meshmap-vtrace-panel {
 	display: none;
 	position: absolute;
-	top: 12px;
+	top: auto;
 	right: 52px;
 	left: auto;
-	bottom: auto;
+	bottom: 28px;
 	width: min(320px, calc(100% - 64px));
 	max-height: min(70vh, 560px);
 	overflow-x: hidden;
@@ -48,6 +48,7 @@
 
 .meshmap-vtrace-panel.meshmap-vtrace-floating-placed {
 	right: auto;
+	bottom: auto;
 }
 
 .meshmap-vtrace-header {
@@ -547,10 +548,11 @@
 	}
 
 	.meshmap-vtrace-panel {
-		top: calc(env(safe-area-inset-top, 0px) + 8px);
-		left: calc(env(safe-area-inset-left, 0px) + 8px);
-		right: calc(env(safe-area-inset-right, 0px) + 8px);
-		width: auto;
+		top: auto;
+		bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+		left: auto;
+		right: calc(env(safe-area-inset-right, 0px) + 52px);
+		width: min(360px, calc(100% - 64px));
 		max-height: min(58vh, 480px);
 		z-index: 10000;
 		font-size: 14px;
@@ -559,6 +561,7 @@
 
 	.meshmap-vtrace-panel.meshmap-vtrace-floating-placed {
 		right: auto;
+		bottom: auto;
 		width: min(360px, calc(100% - 16px));
 	}
 

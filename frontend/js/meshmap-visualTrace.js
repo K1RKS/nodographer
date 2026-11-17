@@ -1388,22 +1388,27 @@
       box.textContent = 'No paths loaded.';
       return;
     }
-    var allLabel = document.createElement('label');
-    allLabel.className = 'meshmap-vtrace-path';
-    var allRadio = document.createElement('input');
-    allRadio.type = 'radio';
-    allRadio.name = 'meshmap-vtrace-path';
-    allRadio.value = 'all';
-    allRadio.checked = state.selected === 'all';
-    allRadio.addEventListener('change', function () {
-      state.selected = 'all';
-      drawDoc();
-      fitMapToTrace();
-      saveSession();
-    });
-    allLabel.appendChild(allRadio);
-    allLabel.appendChild(document.createTextNode(' All paths'));
-    box.appendChild(allLabel);
+    // "All paths" only when multipath; single-path runs skip the redundant choice.
+    if (doc.paths.length >= 2) {
+      var allLabel = document.createElement('label');
+      allLabel.className = 'meshmap-vtrace-path';
+      var allRadio = document.createElement('input');
+      allRadio.type = 'radio';
+      allRadio.name = 'meshmap-vtrace-path';
+      allRadio.value = 'all';
+      allRadio.checked = state.selected === 'all';
+      allRadio.addEventListener('change', function () {
+        state.selected = 'all';
+        drawDoc();
+        fitMapToTrace();
+        saveSession();
+      });
+      allLabel.appendChild(allRadio);
+      allLabel.appendChild(document.createTextNode(' All paths'));
+      box.appendChild(allLabel);
+    } else if (state.selected === 'all' && doc.paths[0]) {
+      state.selected = doc.paths[0].index;
+    }
 
     doc.paths.forEach(function (path) {
       var label = document.createElement('label');
@@ -1412,7 +1417,9 @@
       radio.type = 'radio';
       radio.name = 'meshmap-vtrace-path';
       radio.value = String(path.index);
-      radio.checked = Number(state.selected) === Number(path.index);
+      radio.checked = state.selected === 'all'
+        ? doc.paths.length === 1
+        : Number(state.selected) === Number(path.index);
       radio.addEventListener('change', function () {
         state.selected = path.index;
         drawDoc();
