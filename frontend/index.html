@@ -74,6 +74,7 @@
 	<script src="js/meshmap-coverage.js"></script>
 	<link rel="stylesheet" href="css/meshmap-visualTrace.css">
 	<script src="js/meshmap-visualTrace.js"></script>
+	<script src="js/meshmap-freshness.js"></script>
 
 	<script src="js/nodographer-config.js"></script>
 	<script src="js/meshmap-snrCalculator.js"></script>
@@ -633,6 +634,11 @@ if (window.MeshmapCoverage) {
 }
 if (window.MeshmapVisualTrace) {
 	MeshmapVisualTrace.init(map, allDevices, mapInfo);
+}
+
+// Newest node last_seen — backend freshness indicator
+if (window.MeshmapFreshness) {
+	MeshmapFreshness.addToMap(map, allDevices);
 }
 
 //change link lines based on different metrics
