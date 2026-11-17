@@ -1131,40 +1131,79 @@
     }
   }
 
+  function fetchWithTimeout(url, ms) {
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = null;
+    if (ctrl) {
+      timer = setTimeout(function () {
+        try { ctrl.abort(); } catch (e) { /* ignore */ }
+      }, ms || 4500);
+    }
+    return fetch(url, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: ctrl ? ctrl.signal : undefined
+    }).then(function (resp) {
+      if (timer) clearTimeout(timer);
+      return resp;
+    }, function (err) {
+      if (timer) clearTimeout(timer);
+      throw err;
+    });
+  }
+
+  function isNetworkFetchError(err) {
+    var msg = String((err && err.message) || err || '');
+    return /NetworkError|Failed to fetch|Load failed|network/i.test(msg) ||
+      (err && err.name === 'TypeError');
+  }
+
   /**
    * Probe whether source has /cgi-bin/stableroute (package installed).
    * Returns true/false, or null when the check could not be completed.
+   *
+   * Note: a missing CGI on AREDN returns a stock 404 without CORS headers, so
+   * browsers throw NetworkError instead of exposing status 404. If traceroute
+   * CGI is reachable (has Access-Control-Allow-Origin), treat that as "not installed".
    */
-  async function probeStablerouteSupport(source) {
+  async function probeStablerouteSupport(source, opts) {
+    opts = opts || {};
     var key = nodeKey(source);
     if (!key) return null;
-    if (Object.prototype.hasOwnProperty.call(stablerouteSupportCache, key)) {
+    if (!opts.force && Object.prototype.hasOwnProperty.call(stablerouteSupportCache, key)) {
       return !!stablerouteSupportCache[key];
     }
     if (!onMeshHost()) return null;
-    var url = 'http://' + key + '.local.mesh/cgi-bin/stableroute';
+    var base = 'http://' + key + '.local.mesh/cgi-bin/';
     try {
-      var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      var timer = null;
-      if (ctrl) {
-        timer = setTimeout(function () {
-          try { ctrl.abort(); } catch (e) { /* ignore */ }
-        }, 4500);
-      }
-      var resp = await fetch(url, {
-        method: 'GET',
-        cache: 'no-store',
-        signal: ctrl ? ctrl.signal : undefined
-      });
-      if (timer) clearTimeout(timer);
+      var resp = await fetchWithTimeout(base + 'stableroute', 4500);
       // Missing CGI is 404; installed package answers even without a destination.
       var ok = resp.status !== 404;
       stablerouteSupportCache[key] = ok;
       return ok;
     } catch (err) {
-      // Unreachable / aborted / network — unknown; do not cache as false.
+      // Timed out / aborted — unknown; do not cache as missing.
+      if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+        return null;
+      }
+      // CORS/network on stableroute: stock 404 pages omit ACAO, so the browser
+      // throws. If traceroute CGI is reachable, the package is not installed.
+      try {
+        var tr = await fetchWithTimeout(base + 'traceroute', 4500);
+        if (tr && tr.status !== 404) {
+          stablerouteSupportCache[key] = false;
+          return false;
+        }
+      } catch (err2) {
+        /* node unreachable — unknown */
+      }
       return null;
     }
+  }
+
+  function rememberStablerouteMissing(source) {
+    var key = nodeKey(source);
+    if (key) stablerouteSupportCache[key] = false;
   }
 
   function allLinkLayers() {
@@ -1697,7 +1736,20 @@
    * JSON mode buffers until done and uses -noprogress, so text is preferred here.
    */
   async function fetchStablerouteStreaming(host, destination, n, onProgress) {
-    var resp = await fetch(nodeCgiUrl(host, 'stableroute', destination, n, false));
+    var resp;
+    try {
+      resp = await fetch(nodeCgiUrl(host, 'stableroute', destination, n, false));
+    } catch (err) {
+      if (isNetworkFetchError(err)) {
+        var missing = new Error('STABLEROUTE_MISSING');
+        missing.cause = err;
+        throw missing;
+      }
+      throw err;
+    }
+    if (resp.status === 404) {
+      throw new Error('STABLEROUTE_MISSING');
+    }
     if (!resp.ok) {
       throw new Error('node CGI HTTP ' + resp.status);
     }
@@ -1951,13 +2003,30 @@
         syncRunsVisibility();
 
         var stablerouteOpt = toolSel.querySelector('option[value="stableroute"]');
+        var stablerouteOptBackup = stablerouteOpt ? stablerouteOpt.cloneNode(true) : null;
         var sourceProbeTimer = null;
         var sourceProbeToken = 0;
+        var lastProbedSourceKey = '';
 
         function setStablerouteToolAvailable(available) {
-          if (!stablerouteOpt) return;
-          stablerouteOpt.hidden = !available;
-          stablerouteOpt.disabled = !available;
+          var opt = toolSel.querySelector('option[value="stableroute"]');
+          if (available) {
+            if (!opt && stablerouteOptBackup) {
+              opt = stablerouteOptBackup.cloneNode(true);
+              opt.hidden = false;
+              opt.disabled = false;
+              toolSel.appendChild(opt);
+            } else if (opt) {
+              opt.hidden = false;
+              opt.disabled = false;
+            }
+            stablerouteOpt = opt;
+            return;
+          }
+          if (!opt) return;
+          // Remove from the select so it reliably disappears/reappears across browsers.
+          if (opt.parentNode) opt.parentNode.removeChild(opt);
+          stablerouteOpt = null;
         }
 
         function forceToolTraceroute() {
@@ -1969,32 +2038,55 @@
         async function refreshStablerouteAvailability(opts) {
           opts = opts || {};
           var source = sourceIn.value.trim();
+          var key = nodeKey(source);
           var token = ++sourceProbeToken;
+          var wasStableroute = toolSel.value === 'stableroute';
+          // Always restore the choice while checking a (possibly new) source —
+          // a previous "missing" source must not leave the option stuck hidden.
+          setStablerouteToolAvailable(true);
+          if (wasStableroute) toolSel.value = 'stableroute';
           if (!source || !onMeshHost()) {
-            setStablerouteToolAvailable(true);
             return;
           }
-          var supported = await probeStablerouteSupport(source);
+          var sourceChanged = key && key !== lastProbedSourceKey;
+          lastProbedSourceKey = key || lastProbedSourceKey;
+          var supported = await probeStablerouteSupport(source, {
+            force: !!opts.force || sourceChanged
+          });
           if (token !== sourceProbeToken) return;
           if (supported === null) {
             // Could not check — leave stableroute selectable.
             setStablerouteToolAvailable(true);
+            if (wasStableroute) toolSel.value = 'stableroute';
             return;
           }
           setStablerouteToolAvailable(supported);
-          if (!supported && toolSel.value === 'stableroute') {
+          if (!supported && wasStableroute) {
             if (!opts.silent) {
               window.alert('The stableroute APK needs to be installed on the source.');
             }
             forceToolTraceroute();
+          } else if (supported && wasStableroute) {
+            toolSel.value = 'stableroute';
+            syncRunsVisibility();
           }
         }
 
+        function handleStablerouteMissing(source) {
+          rememberStablerouteMissing(source);
+          setStablerouteToolAvailable(false);
+          window.alert('The stableroute APK needs to be installed on the source.');
+          forceToolTraceroute();
+          setStatus('stableroute not installed on ' + (nodeKey(source) || source));
+        }
+
         function scheduleStablerouteCheck() {
+          // Show immediately when the user edits source so a prior hide does not stick.
+          setStablerouteToolAvailable(true);
           if (sourceProbeTimer) clearTimeout(sourceProbeTimer);
           sourceProbeTimer = setTimeout(function () {
             sourceProbeTimer = null;
-            refreshStablerouteAvailability();
+            refreshStablerouteAvailability({ force: true });
           }, 350);
         }
 
@@ -2297,7 +2389,22 @@
             applyDoc(doc);
           } catch (err) {
             stopProgress();
-            setStatus(String(err.message || err));
+            var msg = String(err && err.message || err);
+            if (tool === 'stableroute' &&
+                (msg === 'STABLEROUTE_MISSING' ||
+                 msg.indexOf('HTTP 404') >= 0 ||
+                 isNetworkFetchError(err))) {
+              // Confirm node is up via traceroute CGI before blaming the APK.
+              var supported = await probeStablerouteSupport(source);
+              if (supported === false || msg === 'STABLEROUTE_MISSING' ||
+                  msg.indexOf('HTTP 404') >= 0) {
+                handleStablerouteMissing(source);
+              } else {
+                setStatus(msg);
+              }
+            } else {
+              setStatus(msg);
+            }
           } finally {
             setBusy(false);
           }
