@@ -1346,13 +1346,15 @@
         '<pre class="meshmap-vtrace-console-plain">(no report loaded)</pre>';
     }
     if (control._console) {
-      if ((hasDoc || text) && !state.consoleMinimized) {
+      // Trace report follows Visual Traceroute: only while the tool panel is on.
+      var show = !!(state.panelOpen && (hasDoc || text));
+      if (show && !state.consoleMinimized) {
         L.DomUtil.addClass(control._console, 'meshmap-vtrace-console-open');
         L.DomUtil.removeClass(control._console, 'meshmap-vtrace-console-min');
-      } else if ((hasDoc || text) && state.consoleMinimized) {
+      } else if (show && state.consoleMinimized) {
         L.DomUtil.addClass(control._console, 'meshmap-vtrace-console-open');
         L.DomUtil.addClass(control._console, 'meshmap-vtrace-console-min');
-      } else if (!hasDoc && !text) {
+      } else {
         L.DomUtil.removeClass(control._console, 'meshmap-vtrace-console-open');
         L.DomUtil.removeClass(control._console, 'meshmap-vtrace-console-min');
       }
@@ -1721,7 +1723,7 @@
 
   function buildControl() {
     var Ctrl = L.Control.extend({
-      options: { position: 'verticalcenterright' },
+      options: { position: 'verticalcenterleft' },
       onAdd: function () {
         var root = L.DomUtil.create('div', 'leaflet-bar meshmap-vtrace');
         var btn = L.DomUtil.create('a', 'meshmap-vtrace-button', root);
@@ -1945,6 +1947,7 @@
             L.DomUtil.removeClass(panel, 'meshmap-vtrace-panel-open');
             ensureLayerOff();
           }
+          updateConsole();
           if (!opts.skipSave) saveSession();
         }
 
