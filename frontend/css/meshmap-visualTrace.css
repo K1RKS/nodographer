@@ -18,22 +18,26 @@
 	color: #c62828;
 }
 
+/* Floating map overlay (draggable) */
 .meshmap-vtrace-panel {
 	display: none;
 	position: absolute;
-	top: -2px;
-	right: calc(100% + 6px);
-	width: 320px;
-	max-height: min(70vh, 620px);
+	top: 12px;
+	right: 52px;
+	left: auto;
+	bottom: auto;
+	width: min(320px, calc(100% - 64px));
+	max-height: min(70vh, 560px);
 	overflow-x: hidden;
 	overflow-y: auto;
+	-webkit-overflow-scrolling: touch;
 	background: #fff;
 	border: 1px solid #bbb;
 	border-radius: 4px;
 	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 	font-size: 13px;
-	z-index: 1000;
-	padding: 8px 10px 10px;
+	z-index: 1100;
+	padding: 0 10px 10px;
 	box-sizing: border-box;
 	color: #222;
 }
@@ -42,10 +46,61 @@
 	display: block;
 }
 
+.meshmap-vtrace-panel.meshmap-vtrace-floating-placed {
+	right: auto;
+}
+
 .meshmap-vtrace-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
 	font-weight: bold;
 	font-size: 14px;
-	margin-bottom: 6px;
+	margin: 0 -10px 6px;
+	padding: 8px 10px;
+	background: #f3f3f3;
+	border-bottom: 1px solid #ddd;
+	border-radius: 4px 4px 0 0;
+	user-select: none;
+	-webkit-user-select: none;
+	touch-action: none;
+}
+
+.meshmap-vtrace-header-title {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.meshmap-vtrace-panel-close {
+	flex: 0 0 auto !important;
+	width: 28px;
+	min-width: 28px;
+	height: 28px;
+	padding: 0 !important;
+	line-height: 1;
+	font-size: 18px;
+	font-weight: 600;
+	border: 1px solid #bbb;
+	border-radius: 3px;
+	background: #fff;
+	cursor: pointer;
+	color: #444;
+}
+
+.meshmap-vtrace-panel-close:hover {
+	background: #ebebeb;
+}
+
+.meshmap-vtrace-drag-handle {
+	cursor: grab;
+}
+
+.meshmap-vtrace-dragging,
+.meshmap-vtrace-dragging .meshmap-vtrace-drag-handle {
+	cursor: grabbing !important;
+	user-select: none;
+	-webkit-user-select: none;
 }
 
 .meshmap-vtrace-tabs {
@@ -182,8 +237,7 @@
 	margin-top: 6px;
 }
 
-.meshmap-vtrace-row button,
-.meshmap-vtrace-panel button {
+.meshmap-vtrace-row button {
 	flex: 1 1 auto;
 	padding: 6px 8px;
 	border: 1px solid #999;
@@ -193,8 +247,7 @@
 	font-size: 12px;
 }
 
-.meshmap-vtrace-row button:hover,
-.meshmap-vtrace-panel button:hover {
+.meshmap-vtrace-row button:hover {
 	background: #ebebeb;
 }
 
@@ -301,25 +354,35 @@
 	display: none !important;
 }
 
-/* Text report console (map overlay, minimizable) */
+/* Text report console (map overlay, minimizable, draggable) */
 .meshmap-vtrace-console {
 	display: none;
 	position: absolute;
 	left: 12px;
-	right: 12px;
+	right: auto;
 	bottom: 28px;
-	max-width: min(560px, calc(100% - 24px));
-	z-index: 1000;
+	top: auto;
+	width: min(520px, calc(100% - 24px));
+	max-height: min(48vh, 360px);
+	z-index: 1100;
 	background: rgba(255, 255, 255, 0.96);
 	border: 1px solid #999;
 	border-radius: 4px;
 	box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 	color: #222;
 	font-size: 12px;
+	box-sizing: border-box;
+	overflow: hidden;
+}
+
+.meshmap-vtrace-console.meshmap-vtrace-floating-placed {
+	bottom: auto;
+	right: auto;
 }
 
 .meshmap-vtrace-console.meshmap-vtrace-console-open {
-	display: block;
+	display: flex;
+	flex-direction: column;
 }
 
 .meshmap-vtrace-console-bar {
@@ -331,11 +394,19 @@
 	border-bottom: 1px solid #ddd;
 	background: #f3f3f3;
 	border-radius: 4px 4px 0 0;
+	flex: 0 0 auto;
+	user-select: none;
+	-webkit-user-select: none;
+	touch-action: none;
 }
 
 .meshmap-vtrace-console-title {
 	font-weight: 600;
 	font-size: 12px;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .meshmap-vtrace-console-actions {
@@ -364,12 +435,15 @@
 .meshmap-vtrace-console-body {
 	margin: 0;
 	padding: 8px 10px;
-	max-height: min(56vh, 440px);
+	max-height: min(40vh, 300px);
 	overflow: auto;
+	-webkit-overflow-scrolling: touch;
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	font-size: 11px;
 	line-height: 1.35;
 	word-break: break-word;
+	flex: 1 1 auto;
+	min-height: 0;
 }
 
 .meshmap-vtrace-console-body pre {
@@ -403,8 +477,8 @@
 	color: #222;
 	padding: 8px 10px;
 	border-radius: 8px;
-	min-width: 180px;
-	max-width: min(320px, 70vw);
+	min-width: 160px;
+	max-width: min(280px, 78vw);
 	font-size: 12px;
 	line-height: 1.4;
 	word-break: break-word;
@@ -459,15 +533,139 @@
 	border-radius: 4px;
 }
 
-@media (max-width: 720px) {
+.meshmap-vtrace-console.meshmap-vtrace-console-min {
+	max-height: none;
+}
+
+/* Phones / coarse pointers */
+@media (pointer: coarse), (max-width: 700px) {
+	.leaflet-bar a.meshmap-vtrace-button {
+		min-width: 44px !important;
+		min-height: 44px !important;
+		width: 44px !important;
+		height: 44px !important;
+	}
+
 	.meshmap-vtrace-panel {
+		top: calc(env(safe-area-inset-top, 0px) + 8px);
+		left: calc(env(safe-area-inset-left, 0px) + 8px);
+		right: calc(env(safe-area-inset-right, 0px) + 8px);
+		width: auto;
+		max-height: min(58vh, 480px);
+		z-index: 10000;
+		font-size: 14px;
+		padding: 0 8px 8px;
+	}
+
+	.meshmap-vtrace-panel.meshmap-vtrace-floating-placed {
 		right: auto;
-		left: calc(100% + 6px);
-		width: min(300px, 70vw);
+		width: min(360px, calc(100% - 16px));
+	}
+
+	.meshmap-vtrace-header {
+		margin: 0 -8px 6px;
+		padding: 10px 8px;
+		font-size: 15px;
+	}
+
+	.meshmap-vtrace-panel-close {
+		width: 36px;
+		min-width: 36px;
+		height: 36px;
+		font-size: 22px;
+	}
+
+	.meshmap-vtrace-tab {
+		padding: 10px 8px;
+		font-size: 13px;
+	}
+
+	.meshmap-vtrace-field input,
+	.meshmap-vtrace-field select,
+	.meshmap-vtrace-paste {
+		font-size: 16px; /* avoid iOS focus zoom */
+		padding: 8px 10px;
+	}
+
+	.meshmap-vtrace-paste {
+		min-height: 3.2em;
+		font-size: 14px;
+	}
+
+	.meshmap-vtrace-row button {
+		min-height: 40px;
+		padding: 8px 10px;
+		font-size: 14px;
+	}
+
+	.meshmap-vtrace-options-toggle {
+		min-height: 40px;
+		font-size: 13px;
+	}
+
+	.meshmap-vtrace-check {
+		min-height: 36px;
+		font-size: 13px;
 	}
 
 	.meshmap-vtrace-console {
-		bottom: 12px;
-		max-width: calc(100% - 24px);
+		left: calc(env(safe-area-inset-left, 0px) + 8px);
+		right: calc(env(safe-area-inset-right, 0px) + 8px);
+		bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+		width: auto;
+		max-height: min(36vh, 260px);
+		z-index: 10000;
+	}
+
+	.meshmap-vtrace-console.meshmap-vtrace-floating-placed {
+		right: auto;
+		width: min(420px, calc(100% - 16px));
+	}
+
+	.meshmap-vtrace-console-bar {
+		padding: 8px;
+	}
+
+	.meshmap-vtrace-console-title {
+		font-size: 13px;
+	}
+
+	.meshmap-vtrace-console-copy,
+	.meshmap-vtrace-console-toggle {
+		min-height: 36px;
+		padding: 6px 10px;
+		font-size: 13px;
+	}
+
+	.meshmap-vtrace-console-body {
+		max-height: min(28vh, 200px);
+		font-size: 12px;
+		padding: 8px;
+	}
+
+	.meshmap-vtrace-popup {
+		max-width: min(260px, 82vw);
+		font-size: 13px;
+		padding: 10px;
+	}
+
+	.meshmap-vtrace-hop-label span {
+		font-size: 11px;
+		padding: 2px 6px;
+	}
+}
+
+/* Very narrow phones */
+@media (max-width: 380px) {
+	.meshmap-vtrace-panel {
+		max-height: min(52vh, 420px);
+	}
+
+	.meshmap-vtrace-console {
+		max-height: min(30vh, 200px);
+	}
+
+	.meshmap-vtrace-console-body {
+		max-height: min(22vh, 150px);
 	}
 }

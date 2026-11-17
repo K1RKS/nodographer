@@ -53,7 +53,9 @@
     consoleMinimized: false,
     panelOpen: false,
     modeTab: 'paste', // 'paste' | 'live'
-    optionsMinimized: true
+    optionsMinimized: true,
+    panelPos: null, // { left, top } map-container px, or null for CSS default
+    consolePos: null
   };
 
   function saveSession() {
@@ -75,12 +77,171 @@
       panelOpen: !!state.panelOpen,
       modeTab: state.modeTab === 'live' ? 'live' : 'paste',
       optionsMinimized: !!state.optionsMinimized,
+      panelPos: state.panelPos,
+      consolePos: state.consolePos,
       selected: state.selected,
       status: state.status || '',
       rawText: state.rawText || '',
       doc: state.doc || null
     };
     MeshmapSession.write(patch);
+  }
+
+  function isCompactUi() {
+    if (window.MeshmapMobile && typeof MeshmapMobile.isCompactUi === 'function') {
+      return !!MeshmapMobile.isCompactUi();
+    }
+    try {
+      return window.matchMedia('(max-width: 700px), (pointer: coarse)').matches;
+    } catch (err) {
+      return window.innerWidth <= 700;
+    }
+  }
+
+  function normalizePos(pos) {
+    if (!pos || typeof pos !== 'object') return null;
+    var left = Number(pos.left);
+    var top = Number(pos.top);
+    if (!isFinite(left) || !isFinite(top)) return null;
+    return { left: left, top: top };
+  }
+
+  function clampPosToMap(el, pos) {
+    if (!map || !el || !pos) return pos;
+    var mapEl = map.getContainer();
+    var mapW = mapEl.clientWidth || 0;
+    var mapH = mapEl.clientHeight || 0;
+    var w = el.offsetWidth || 280;
+    var h = el.offsetHeight || 120;
+    var margin = 4;
+    var left = Math.max(margin, Math.min(pos.left, Math.max(margin, mapW - w - margin)));
+    var top = Math.max(margin, Math.min(pos.top, Math.max(margin, mapH - h - margin)));
+    return { left: left, top: top };
+  }
+
+  function applyFloatingPos(el, pos, placedClass) {
+    if (!el) return;
+    var n = normalizePos(pos);
+    if (!n) {
+      el.style.left = '';
+      el.style.top = '';
+      el.style.right = '';
+      el.style.bottom = '';
+      if (placedClass) L.DomUtil.removeClass(el, placedClass);
+      return;
+    }
+    n = clampPosToMap(el, n);
+    el.style.left = Math.round(n.left) + 'px';
+    el.style.top = Math.round(n.top) + 'px';
+    el.style.right = 'auto';
+    el.style.bottom = 'auto';
+    if (placedClass) L.DomUtil.addClass(el, placedClass);
+  }
+
+  /**
+   * Pointer/touch drag for floating map overlays. Starts from handle only;
+   * ignores interactive controls inside the handle.
+   */
+  function enableFloatingDrag(el, handle, opts) {
+    opts = opts || {};
+    if (!el || !handle || !map) return;
+    var placedClass = opts.placedClass || 'meshmap-vtrace-floating-placed';
+    var onMoveEnd = typeof opts.onMoveEnd === 'function' ? opts.onMoveEnd : null;
+    var dragging = false;
+    var startX = 0;
+    var startY = 0;
+    var origLeft = 0;
+    var origTop = 0;
+    var pointerId = null;
+
+    function eventPoint(e) {
+      if (e.touches && e.touches[0]) {
+        return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      }
+      if (e.changedTouches && e.changedTouches[0]) {
+        return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+      }
+      return { x: e.clientX, y: e.clientY };
+    }
+
+    function shouldIgnoreTarget(target) {
+      if (!target || !target.closest) return false;
+      return !!target.closest('button, a, input, select, textarea, label, .meshmap-vtrace-tabs');
+    }
+
+    function onDown(e) {
+      if (shouldIgnoreTarget(e.target)) return;
+      if (e.type === 'mousedown' && e.button != null && e.button !== 0) return;
+      var pt = eventPoint(e);
+      var mapRect = map.getContainer().getBoundingClientRect();
+      var rect = el.getBoundingClientRect();
+      dragging = true;
+      pointerId = e.pointerId != null ? e.pointerId : null;
+      startX = pt.x;
+      startY = pt.y;
+      origLeft = rect.left - mapRect.left;
+      origTop = rect.top - mapRect.top;
+      applyFloatingPos(el, { left: origLeft, top: origTop }, placedClass);
+      L.DomUtil.addClass(el, 'meshmap-vtrace-dragging');
+      try {
+        if (el.setPointerCapture && pointerId != null) el.setPointerCapture(pointerId);
+      } catch (err) { /* ignore */ }
+      L.DomEvent.stop(e);
+    }
+
+    function onMove(e) {
+      if (!dragging) return;
+      if (pointerId != null && e.pointerId != null && e.pointerId !== pointerId) return;
+      var pt = eventPoint(e);
+      var next = clampPosToMap(el, {
+        left: origLeft + (pt.x - startX),
+        top: origTop + (pt.y - startY)
+      });
+      applyFloatingPos(el, next, placedClass);
+      L.DomEvent.stop(e);
+    }
+
+    function onUp(e) {
+      if (!dragging) return;
+      if (pointerId != null && e.pointerId != null && e.pointerId !== pointerId) return;
+      dragging = false;
+      L.DomUtil.removeClass(el, 'meshmap-vtrace-dragging');
+      try {
+        if (el.releasePointerCapture && pointerId != null) el.releasePointerCapture(pointerId);
+      } catch (err) { /* ignore */ }
+      pointerId = null;
+      var left = parseFloat(el.style.left);
+      var top = parseFloat(el.style.top);
+      if (onMoveEnd && isFinite(left) && isFinite(top)) {
+        onMoveEnd(clampPosToMap(el, { left: left, top: top }));
+      }
+    }
+
+    L.DomUtil.addClass(handle, 'meshmap-vtrace-drag-handle');
+    if (window.PointerEvent) {
+      handle.addEventListener('pointerdown', onDown);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+    } else {
+      handle.addEventListener('mousedown', onDown);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+      handle.addEventListener('touchstart', onDown, { passive: false });
+      window.addEventListener('touchmove', onMove, { passive: false });
+      window.addEventListener('touchend', onUp);
+    }
+  }
+
+  function reclampFloatingPanels() {
+    if (control && control._panel && state.panelPos) {
+      state.panelPos = clampPosToMap(control._panel, state.panelPos);
+      applyFloatingPos(control._panel, state.panelPos, 'meshmap-vtrace-floating-placed');
+    }
+    if (control && control._console && state.consolePos) {
+      state.consolePos = clampPosToMap(control._console, state.consolePos);
+      applyFloatingPos(control._console, state.consolePos, 'meshmap-vtrace-floating-placed');
+    }
   }
 
   function readSavedSession() {
@@ -1550,9 +1711,13 @@
         btn.setAttribute('aria-label', 'Visual Traceroute');
         btn.innerHTML = TRACE_SVG;
 
-        var panel = L.DomUtil.create('div', 'meshmap-vtrace-panel', root);
+        // Floating overlay on the map (not docked to the control) so it can drag.
+        var panel = L.DomUtil.create('div', 'meshmap-vtrace-panel', map.getContainer());
         panel.innerHTML =
-          '<div class="meshmap-vtrace-header">Visual Traceroute</div>' +
+          '<div class="meshmap-vtrace-header meshmap-vtrace-drag-handle" title="Drag to move">' +
+          '<span class="meshmap-vtrace-header-title">Visual Traceroute</span>' +
+          '<button type="button" class="meshmap-vtrace-panel-close" title="Close" aria-label="Close">×</button>' +
+          '</div>' +
           '<div class="meshmap-vtrace-tabs" role="tablist">' +
           '<button type="button" class="meshmap-vtrace-tab" data-tab="paste" role="tab" aria-selected="true">Paste</button>' +
           '<button type="button" class="meshmap-vtrace-tab" data-tab="live" role="tab" aria-selected="false">Live</button>' +
@@ -1612,7 +1777,7 @@
 
         var consoleEl = L.DomUtil.create('div', 'meshmap-vtrace-console', map.getContainer());
         consoleEl.innerHTML =
-          '<div class="meshmap-vtrace-console-bar">' +
+          '<div class="meshmap-vtrace-console-bar meshmap-vtrace-drag-handle" title="Drag to move">' +
           '<span class="meshmap-vtrace-console-title">Trace report</span>' +
           '<span class="meshmap-vtrace-console-actions">' +
           '<button type="button" class="meshmap-vtrace-console-copy">Copy</button>' +
@@ -1626,6 +1791,8 @@
         var parseBtn = panel.querySelector('.meshmap-vtrace-parse');
         var clearBtn = panel.querySelector('.meshmap-vtrace-clear');
         var clearLiveBtn = panel.querySelector('.meshmap-vtrace-clear-live');
+        var panelCloseBtn = panel.querySelector('.meshmap-vtrace-panel-close');
+        var panelHeader = panel.querySelector('.meshmap-vtrace-header');
         var toolSel = panel.querySelector('.meshmap-vtrace-tool');
         var sourceIn = panel.querySelector('.meshmap-vtrace-source');
         var destIn = panel.querySelector('.meshmap-vtrace-dest');
@@ -1648,9 +1815,14 @@
         var tabPanels = panel.querySelectorAll('.meshmap-vtrace-tabpanel');
         var optionsBox = panel.querySelector('.meshmap-vtrace-options');
         var optionsToggle = panel.querySelector('.meshmap-vtrace-options-toggle');
+        var consoleBar = consoleEl.querySelector('.meshmap-vtrace-console-bar');
         var consoleToggle = consoleEl.querySelector('.meshmap-vtrace-console-toggle');
         var consoleCopy = consoleEl.querySelector('.meshmap-vtrace-console-copy');
         var consoleBody = consoleEl.querySelector('.meshmap-vtrace-console-body');
+
+        if (isCompactUi() && paste) {
+          paste.rows = 3;
+        }
 
         nodeNames.forEach(function (name) {
           var opt = document.createElement('option');
@@ -1741,6 +1913,11 @@
           if (open) {
             L.DomUtil.addClass(root, 'meshmap-vtrace-expanded');
             L.DomUtil.addClass(panel, 'meshmap-vtrace-panel-open');
+            applyFloatingPos(panel, state.panelPos, 'meshmap-vtrace-floating-placed');
+            // First open on small screens: keep default CSS placement if undragged.
+            if (!state.panelPos && isCompactUi()) {
+              applyFloatingPos(panel, null, 'meshmap-vtrace-floating-placed');
+            }
           } else {
             L.DomUtil.removeClass(root, 'meshmap-vtrace-expanded');
             L.DomUtil.removeClass(panel, 'meshmap-vtrace-panel-open');
@@ -1749,6 +1926,7 @@
         }
 
         L.DomEvent.disableClickPropagation(root);
+        L.DomEvent.disableClickPropagation(panel);
         L.DomEvent.disableScrollPropagation(panel);
         L.DomEvent.disableClickPropagation(consoleEl);
         L.DomEvent.disableScrollPropagation(consoleEl);
@@ -1760,6 +1938,28 @@
             ensureLayerOn();
           }
         });
+        if (panelCloseBtn) {
+          panelCloseBtn.addEventListener('click', function () {
+            togglePanel(false);
+          });
+        }
+
+        enableFloatingDrag(panel, panelHeader, {
+          placedClass: 'meshmap-vtrace-floating-placed',
+          onMoveEnd: function (pos) {
+            state.panelPos = pos;
+            saveSession();
+          }
+        });
+        enableFloatingDrag(consoleEl, consoleBar, {
+          placedClass: 'meshmap-vtrace-floating-placed',
+          onMoveEnd: function (pos) {
+            state.consolePos = pos;
+            saveSession();
+          }
+        });
+        applyFloatingPos(panel, state.panelPos, 'meshmap-vtrace-floating-placed');
+        applyFloatingPos(consoleEl, state.consolePos, 'meshmap-vtrace-floating-placed');
 
         for (var ti = 0; ti < tabBtns.length; ti++) {
           tabBtns[ti].addEventListener('click', function (ev) {
@@ -2020,6 +2220,14 @@
           control._setOptionsMinimized(state.optionsMinimized, { skipSave: true });
         }
       }
+      state.panelPos = normalizePos(saved.panelPos);
+      state.consolePos = normalizePos(saved.consolePos);
+      if (control._panel) {
+        applyFloatingPos(control._panel, state.panelPos, 'meshmap-vtrace-floating-placed');
+      }
+      if (control._console) {
+        applyFloatingPos(control._console, state.consolePos, 'meshmap-vtrace-floating-placed');
+      }
       if (saved.selected != null) {
         state.selected = saved.selected;
       }
@@ -2110,6 +2318,10 @@
         if (control._console && control._console.parentNode) {
           control._console.parentNode.removeChild(control._console);
         }
+        if (control._panel && control._panel.parentNode &&
+            control._panel.parentNode !== control._container) {
+          control._panel.parentNode.removeChild(control._panel);
+        }
         map.removeControl(control);
       } catch (err) { /* ignore */ }
     }
@@ -2118,9 +2330,15 @@
     map.off('overlayadd', onOverlayAdd);
     map.off('overlayremove', onOverlayRemove);
     map.off('zoomend', onZoomOrMoveEnd);
+    map.off('resize', reclampFloatingPanels);
     map.on('overlayadd', onOverlayAdd);
     map.on('overlayremove', onOverlayRemove);
     map.on('zoomend', onZoomOrMoveEnd);
+    map.on('resize', reclampFloatingPanels);
+    window.addEventListener('resize', reclampFloatingPanels);
+    window.addEventListener('orientationchange', function () {
+      setTimeout(reclampFloatingPanels, 220);
+    });
     bindSpiderfyRedraw();
     restoreSession();
     if (!readSavedSession() && mapInfo && mapInfo.localnode && control._form && control._form.sourceIn) {
