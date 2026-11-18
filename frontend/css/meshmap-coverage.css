@@ -638,17 +638,21 @@ html[data-theme="dark"] .meshmap-coverage-actions {
 	border-color: #444;
 }
 
-@media (pointer: coarse), (max-width: 700px) {
-	.meshmap-coverage-panel.meshmap-coverage-panel-open {
-		z-index: 10000;
-		top: calc(env(safe-area-inset-top, 0px) + 8px);
-		left: calc(env(safe-area-inset-left, 0px) + 8px);
-		right: calc(env(safe-area-inset-right, 0px) + 8px);
-		width: auto;
-		max-height: min(75vh, 640px);
-		position: fixed;
-	}
+/* Phones/tablets: panel is reparented onto the map (.meshmap-coverage-panel-docked)
+   so Leaflet's left-rail transform cannot shrink position:fixed to the icon width. */
+.meshmap-coverage-panel.meshmap-coverage-panel-docked {
+	z-index: 10000;
+	position: absolute;
+	top: calc(env(safe-area-inset-top, 0px) + 8px);
+	left: calc(env(safe-area-inset-left, 0px) + 8px);
+	right: calc(env(safe-area-inset-right, 0px) + 8px);
+	width: auto;
+	max-width: none;
+	max-height: min(75vh, 640px);
+	box-shadow: 0 3px 14px rgba(0, 0, 0, 0.4);
+}
 
+@media (pointer: coarse), (max-width: 700px) {
 	.meshmap-coverage,
 	.leaflet-bar a.meshmap-coverage-button {
 		min-width: 44px !important;

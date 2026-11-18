@@ -1177,10 +1177,31 @@
       return L.DomUtil.hasClass(this._container, 'meshmap-coverage-expanded');
     },
 
+    isCompactUi: function () {
+      if (window.MeshmapMobile && typeof MeshmapMobile.isCompactUi === 'function') {
+        return !!MeshmapMobile.isCompactUi();
+      }
+      try {
+        return window.matchMedia('(max-width: 700px), (pointer: coarse)').matches;
+      } catch (err) {
+        return window.innerWidth <= 700;
+      }
+    },
+
+    // Phones: reparent onto the map. The left rail uses transform, which makes
+    // position:fixed resolve against the 44px control instead of the viewport.
+    _dock: function (on) {
+      if (!this._panel || !map) return;
+      var home = on ? map.getContainer() : this._container;
+      if (this._panel.parentNode !== home) home.appendChild(this._panel);
+      L.DomUtil[on ? 'addClass' : 'removeClass'](this._panel, 'meshmap-coverage-panel-docked');
+    },
+
     expand: function (opts) {
       opts = opts || {};
       L.DomUtil.addClass(this._container, 'meshmap-coverage-expanded');
       L.DomUtil.addClass(this._panel, 'meshmap-coverage-panel-open');
+      this._dock(this.isCompactUi());
       state.panelOpen = true;
       if (opts.restore) {
         // Re-open UI after refresh; keep saved Show coverage mode as-is.
@@ -1202,6 +1223,7 @@
       L.DomUtil.removeClass(this._panel, 'meshmap-coverage-panel-open');
       this._hideSuggest();
       this.closePropsDialog();
+      this._dock(false);
       state.panelOpen = false;
       // Closing the panel disables coverage on the map.
       if (state.mode !== 'off') setMode('off');

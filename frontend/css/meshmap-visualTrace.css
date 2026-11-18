@@ -576,7 +576,8 @@
 	max-height: none;
 }
 
-/* Phones / coarse pointers */
+/* Phones / coarse pointers: full-width sheets (panel bottom, report top).
+   Desktop-dragged left/top are ignored in JS so these CSS anchors always win. */
 @media (pointer: coarse), (max-width: 700px) {
 	.leaflet-bar a.meshmap-vtrace-button {
 		min-width: 44px !important;
@@ -587,10 +588,10 @@
 
 	.meshmap-vtrace-panel {
 		top: auto;
+		left: calc(env(safe-area-inset-left, 0px) + 8px);
+		right: calc(env(safe-area-inset-right, 0px) + 8px);
 		bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
-		left: auto;
-		right: calc(env(safe-area-inset-right, 0px) + 52px);
-		width: min(360px, calc(100% - 64px));
+		width: auto;
 		max-height: min(58vh, 480px);
 		z-index: 10000;
 		font-size: 14px;
@@ -598,9 +599,12 @@
 	}
 
 	.meshmap-vtrace-panel.meshmap-vtrace-floating-placed {
-		right: auto;
-		bottom: auto;
-		width: min(360px, calc(100% - 16px));
+		/* Compact UI clears floating coords; keep sheet anchors if class lingers. */
+		left: calc(env(safe-area-inset-left, 0px) + 8px);
+		right: calc(env(safe-area-inset-right, 0px) + 8px);
+		bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+		top: auto;
+		width: auto;
 	}
 
 	.meshmap-vtrace-header {
@@ -650,17 +654,21 @@
 	}
 
 	.meshmap-vtrace-console {
+		top: calc(env(safe-area-inset-top, 0px) + 8px);
 		left: calc(env(safe-area-inset-left, 0px) + 8px);
 		right: calc(env(safe-area-inset-right, 0px) + 8px);
-		bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+		bottom: auto;
 		width: auto;
-		max-height: min(36vh, 260px);
-		z-index: 10000;
+		max-height: min(32vh, 240px);
+		z-index: 10001;
 	}
 
 	.meshmap-vtrace-console.meshmap-vtrace-floating-placed {
-		right: auto;
-		width: min(420px, calc(100% - 16px));
+		top: calc(env(safe-area-inset-top, 0px) + 8px);
+		left: calc(env(safe-area-inset-left, 0px) + 8px);
+		right: calc(env(safe-area-inset-right, 0px) + 8px);
+		bottom: auto;
+		width: auto;
 	}
 
 	.meshmap-vtrace-console-bar {
@@ -686,7 +694,7 @@
 	}
 
 	.meshmap-vtrace-console-body {
-		max-height: min(28vh, 200px);
+		max-height: min(24vh, 180px);
 		font-size: 12px;
 		padding: 8px;
 	}
@@ -710,10 +718,10 @@
 	}
 
 	.meshmap-vtrace-console {
-		max-height: min(30vh, 200px);
+		max-height: min(28vh, 200px);
 	}
 
 	.meshmap-vtrace-console-body {
-		max-height: min(22vh, 150px);
+		max-height: min(20vh, 140px);
 	}
 }

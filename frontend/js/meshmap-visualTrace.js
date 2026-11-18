@@ -142,6 +142,12 @@
     if (placedClass) L.DomUtil.addClass(el, placedClass);
   }
 
+  /** On phones, ignore desktop-dragged coords and use the CSS sheet layout. */
+  function floatingPosForUi(pos) {
+    if (isCompactUi()) return null;
+    return normalizePos(pos);
+  }
+
   /**
    * Pointer/touch drag for floating map overlays. Starts from handle only;
    * ignores interactive controls inside the handle.
@@ -238,13 +244,11 @@
   }
 
   function reclampFloatingPanels() {
-    if (control && control._panel && state.panelPos) {
-      state.panelPos = clampPosToMap(control._panel, state.panelPos);
-      applyFloatingPos(control._panel, state.panelPos, 'meshmap-vtrace-floating-placed');
+    if (control && control._panel) {
+      applyFloatingPos(control._panel, floatingPosForUi(state.panelPos), 'meshmap-vtrace-floating-placed');
     }
-    if (control && control._console && state.consolePos) {
-      state.consolePos = clampPosToMap(control._console, state.consolePos);
-      applyFloatingPos(control._console, state.consolePos, 'meshmap-vtrace-floating-placed');
+    if (control && control._console) {
+      applyFloatingPos(control._console, floatingPosForUi(state.consolePos), 'meshmap-vtrace-floating-placed');
     }
   }
 
@@ -2132,11 +2136,9 @@
           if (open) {
             L.DomUtil.addClass(root, 'meshmap-vtrace-expanded');
             L.DomUtil.addClass(panel, 'meshmap-vtrace-panel-open');
-            applyFloatingPos(panel, state.panelPos, 'meshmap-vtrace-floating-placed');
-            // First open on small screens: keep default CSS placement if undragged.
-            if (!state.panelPos && isCompactUi()) {
-              applyFloatingPos(panel, null, 'meshmap-vtrace-floating-placed');
-            }
+            // Phones use the CSS sheet; desktop restores any dragged position.
+            applyFloatingPos(panel, floatingPosForUi(state.panelPos), 'meshmap-vtrace-floating-placed');
+            applyFloatingPos(consoleEl, floatingPosForUi(state.consolePos), 'meshmap-vtrace-floating-placed');
             // Icon is the enable switch (no longer in the layer picker).
             ensureLayerOn();
             if (state.doc) drawDoc();
@@ -2169,6 +2171,12 @@
         enableFloatingDrag(panel, panelHeader, {
           placedClass: 'meshmap-vtrace-floating-placed',
           onMoveEnd: function (pos) {
+            // Compact UI keeps the sheet layout; don't persist a phone drag
+            // that would fight the CSS on the next open.
+            if (isCompactUi()) {
+              applyFloatingPos(panel, null, 'meshmap-vtrace-floating-placed');
+              return;
+            }
             state.panelPos = pos;
             saveSession();
           }
@@ -2176,12 +2184,16 @@
         enableFloatingDrag(consoleEl, consoleBar, {
           placedClass: 'meshmap-vtrace-floating-placed',
           onMoveEnd: function (pos) {
+            if (isCompactUi()) {
+              applyFloatingPos(consoleEl, null, 'meshmap-vtrace-floating-placed');
+              return;
+            }
             state.consolePos = pos;
             saveSession();
           }
         });
-        applyFloatingPos(panel, state.panelPos, 'meshmap-vtrace-floating-placed');
-        applyFloatingPos(consoleEl, state.consolePos, 'meshmap-vtrace-floating-placed');
+        applyFloatingPos(panel, floatingPosForUi(state.panelPos), 'meshmap-vtrace-floating-placed');
+        applyFloatingPos(consoleEl, floatingPosForUi(state.consolePos), 'meshmap-vtrace-floating-placed');
 
         for (var ti = 0; ti < tabBtns.length; ti++) {
           tabBtns[ti].addEventListener('click', function (ev) {
@@ -2487,10 +2499,10 @@
       state.panelPos = normalizePos(saved.panelPos);
       state.consolePos = normalizePos(saved.consolePos);
       if (control._panel) {
-        applyFloatingPos(control._panel, state.panelPos, 'meshmap-vtrace-floating-placed');
+        applyFloatingPos(control._panel, floatingPosForUi(state.panelPos), 'meshmap-vtrace-floating-placed');
       }
       if (control._console) {
-        applyFloatingPos(control._console, state.consolePos, 'meshmap-vtrace-floating-placed');
+        applyFloatingPos(control._console, floatingPosForUi(state.consolePos), 'meshmap-vtrace-floating-placed');
       }
       if (saved.selected != null) {
         state.selected = saved.selected;
