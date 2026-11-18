@@ -2469,6 +2469,9 @@
       if (typeof saved.consoleHidden === 'boolean') {
         state.consoleHidden = saved.consoleHidden;
       }
+      // Panel open/closed must be known before applyDoc/updateConsole so a
+      // closed tool does not reappear (or re-enable its layer) on refresh.
+      state.panelOpen = !!saved.panelOpen;
       if (saved.modeTab === 'live' || saved.modeTab === 'paste') {
         state.modeTab = saved.modeTab;
         if (typeof control._setModeTab === 'function') {
@@ -2501,7 +2504,9 @@
         applyDoc(saved.doc, saved.rawText || null, {
           keepSelected: true,
           keepConsole: true,
-          skipSave: true
+          skipSave: true,
+          // Don't jump the map when the tool was closed across refresh.
+          skipFit: !state.panelOpen
         });
       } else {
         state.doc = null;
@@ -2511,9 +2516,15 @@
         applyHideLinks();
       }
 
-      if (saved.panelOpen && typeof control._togglePanel === 'function') {
+      if (state.panelOpen && typeof control._togglePanel === 'function') {
         control._togglePanel(true, { skipSave: true });
         ensureLayerOn();
+      } else {
+        // applyDoc turns the overlay on; keep it off when the panel was closed.
+        ensureLayerOff();
+        if (typeof control._togglePanel === 'function') {
+          control._togglePanel(false, { skipSave: true });
+        }
       }
     } finally {
       restoringSession = false;

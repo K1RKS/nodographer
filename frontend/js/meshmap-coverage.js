@@ -81,7 +81,8 @@
     bandwidths: [],
     bands: [],
     channels: [],
-    range: DEFAULT_RANGE
+    range: DEFAULT_RANGE,
+    panelOpen: false
   };
   var control = null;
   var syncingLayer = false;
@@ -487,13 +488,20 @@
       bandwidths: [],
       bands: [],
       channels: [],
-      range: DEFAULT_RANGE
+      range: DEFAULT_RANGE,
+      panelOpen: false
     };
     if (!window.MeshmapSession) return;
     var s = MeshmapSession.read();
     var c = s && s[SESSION_KEY];
     if (!c || typeof c !== 'object') return;
     if (c.mode) state.mode = normalizeMode(c.mode);
+    // Older sessions had no panelOpen; treat non-off mode as "was showing coverage".
+    if (typeof c.panelOpen === 'boolean') {
+      state.panelOpen = c.panelOpen;
+    } else {
+      state.panelOpen = state.mode !== 'off';
+    }
     if (typeof c.hideUnknown === 'boolean') state.hideUnknown = c.hideUnknown;
     if (Array.isArray(c.names)) state.names = c.names.slice();
     if (c.colors && typeof c.colors === 'object') {
@@ -562,6 +570,7 @@
     patch[SESSION_KEY] = {
       mode: state.mode,
       hideUnknown: !!state.hideUnknown,
+      panelOpen: !!state.panelOpen,
       names: state.names.slice(),
       colors: (function () {
         var out = {};
@@ -1168,12 +1177,23 @@
       return L.DomUtil.hasClass(this._container, 'meshmap-coverage-expanded');
     },
 
-    expand: function () {
+    expand: function (opts) {
+      opts = opts || {};
       L.DomUtil.addClass(this._container, 'meshmap-coverage-expanded');
       L.DomUtil.addClass(this._panel, 'meshmap-coverage-panel-open');
+      state.panelOpen = true;
+      if (opts.restore) {
+        // Re-open UI after refresh; keep saved Show coverage mode as-is.
+        setLayerVisible(state.mode !== 'off');
+        redraw();
+        return;
+      }
       // Icon is the enable switch (no longer in the layer picker).
       if (state.mode === 'off') setMode('node');
-      else setLayerVisible(true);
+      else {
+        setLayerVisible(true);
+        saveState();
+      }
       this._nameInput.focus();
     },
 
@@ -1182,8 +1202,10 @@
       L.DomUtil.removeClass(this._panel, 'meshmap-coverage-panel-open');
       this._hideSuggest();
       this.closePropsDialog();
+      state.panelOpen = false;
       // Closing the panel disables coverage on the map.
       if (state.mode !== 'off') setMode('off');
+      else saveState();
     },
 
     openPropsDialog: function (name) {
@@ -1582,6 +1604,10 @@
     }
     control = new CoverageControl();
     control.addTo(map);
+    // onAdd forces the layer off until the panel is open; restore panel + layer.
+    if (state.panelOpen && control && typeof control.expand === 'function') {
+      control.expand({ restore: true });
+    }
   }
 
   window.MeshmapCoverage = {
