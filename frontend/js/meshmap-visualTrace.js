@@ -1135,6 +1135,38 @@
     }
   }
 
+  /** Direct node CGI only works when the page itself is on .local.mesh (no mixed content). */
+  function canDirectRun() {
+    return onMeshHost();
+  }
+
+  /** Live via meshinfo POST /trace when the map is wired to a live API (not a snapshot dir). */
+  function canMeshinfoRun() {
+    return !!meshinfoTraceUrl();
+  }
+
+  function canLiveRun() {
+    return canDirectRun() || canMeshinfoRun();
+  }
+
+  function findNodeNameHits(query, limit) {
+    var q = String(query || '').trim().toLowerCase();
+    if (!q) return [];
+    var hits = [];
+    for (var i = 0; i < nodeNames.length; i++) {
+      var name = nodeNames[i];
+      var lower = String(name).toLowerCase();
+      var pos = lower.indexOf(q);
+      if (pos === -1) continue;
+      var rank = pos === 0 ? 0 : /[-_.\s]/.test(lower.charAt(pos - 1)) ? 1 : 2;
+      hits.push({ name: name, rank: rank });
+    }
+    hits.sort(function (a, b) {
+      return a.rank - b.rank || a.name.localeCompare(b.name);
+    });
+    return hits.slice(0, limit || 12);
+  }
+
   function fetchWithTimeout(url, ms) {
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     var timer = null;
@@ -1861,10 +1893,12 @@
           '<option value="traceroute">traceroute</option>' +
           '<option value="stableroute">stableroute</option>' +
           '</select></label>' +
-          '<label class="meshmap-vtrace-field">Source' +
-          '<input list="meshmap-vtrace-nodes" class="meshmap-vtrace-source" autocomplete="off"></label>' +
-          '<label class="meshmap-vtrace-field">Destination' +
-          '<input list="meshmap-vtrace-nodes" class="meshmap-vtrace-dest" autocomplete="off"></label>' +
+          '<label class="meshmap-vtrace-field meshmap-vtrace-node-field">Source' +
+          '<input list="meshmap-vtrace-nodes" class="meshmap-vtrace-source" autocomplete="off" spellcheck="false">' +
+          '<ul class="meshmap-vtrace-suggest" data-suggest="source"></ul></label>' +
+          '<label class="meshmap-vtrace-field meshmap-vtrace-node-field">Destination' +
+          '<input list="meshmap-vtrace-nodes" class="meshmap-vtrace-dest" autocomplete="off" spellcheck="false">' +
+          '<ul class="meshmap-vtrace-suggest" data-suggest="dest"></ul></label>' +
           '<label class="meshmap-vtrace-field meshmap-vtrace-n-wrap" hidden>Runs (stableroute)' +
           '<input type="number" class="meshmap-vtrace-n" min="1" max="20" value="5"></label>' +
           '<datalist id="meshmap-vtrace-nodes"></datalist>' +
@@ -1931,6 +1965,8 @@
         var nWrap = panel.querySelector('.meshmap-vtrace-n-wrap');
         var nIn = panel.querySelector('.meshmap-vtrace-n');
         var directBtn = panel.querySelector('.meshmap-vtrace-direct');
+        var sourceSuggest = panel.querySelector('.meshmap-vtrace-suggest[data-suggest="source"]');
+        var destSuggest = panel.querySelector('.meshmap-vtrace-suggest[data-suggest="dest"]');
         var hideLinksCb = panel.querySelector('.meshmap-vtrace-hide-links');
         var offsetPathsCb = panel.querySelector('.meshmap-vtrace-offset-paths');
         var autoCenterCb = panel.querySelector('.meshmap-vtrace-auto-center');
@@ -1945,6 +1981,7 @@
         var list = panel.querySelector('#meshmap-vtrace-nodes');
         var tabBtns = panel.querySelectorAll('.meshmap-vtrace-tab');
         var tabPanels = panel.querySelectorAll('.meshmap-vtrace-tabpanel');
+        var liveTabBtn = panel.querySelector('.meshmap-vtrace-tab[data-tab="live"]');
         var optionsBox = panel.querySelector('.meshmap-vtrace-options');
         var optionsToggle = panel.querySelector('.meshmap-vtrace-options-toggle');
         var consoleBar = consoleEl.querySelector('.meshmap-vtrace-console-bar');
@@ -1965,11 +2002,14 @@
         if (mapInfo && mapInfo.localnode) {
           sourceIn.value = mapInfo.localnode;
         }
-        if (onMeshHost()) {
-          directBtn.hidden = false;
-          if (state.modeTab !== 'paste' && state.modeTab !== 'live') {
-            state.modeTab = 'live';
-          }
+
+        // Public HTTPS + snapshot data cannot Live-run (mixed content blocks
+        // http://node.local.mesh), so hide Live and keep Paste-only there.
+        var liveOk = canLiveRun();
+        if (liveTabBtn) liveTabBtn.hidden = !liveOk;
+        directBtn.hidden = !liveOk;
+        if (liveOk && state.modeTab !== 'paste' && state.modeTab !== 'live') {
+          state.modeTab = canDirectRun() ? 'live' : 'paste';
         }
 
         this._panel = panel;
@@ -2097,6 +2137,7 @@
         function setModeTab(tab, opts) {
           opts = opts || {};
           var next = tab === 'live' ? 'live' : 'paste';
+          if (next === 'live' && !canLiveRun()) next = 'paste';
           state.modeTab = next;
           for (var i = 0; i < tabBtns.length; i++) {
             var active = tabBtns[i].getAttribute('data-tab') === next;
@@ -2126,9 +2167,90 @@
           if (!opts.skipSave) saveSession();
         }
 
-        // Default: Live on mesh hosts when no saved tab yet (restore may override).
-        setModeTab(onMeshHost() ? 'live' : 'paste', { skipSave: true });
+        // Default: Live only when a live runner exists (mesh host or meshinfo /trace).
+        setModeTab(canDirectRun() ? 'live' : 'paste', { skipSave: true });
         setOptionsMinimized(true, { skipSave: true });
+
+        function bindNodeSuggest(input, suggestEl, onPicked) {
+          if (!input || !suggestEl) return;
+          var items = [];
+          var active = -1;
+
+          function hide() {
+            suggestEl.innerHTML = '';
+            items = [];
+            active = -1;
+            L.DomUtil.removeClass(suggestEl, 'meshmap-vtrace-suggest-open');
+          }
+
+          function render() {
+            items = findNodeNameHits(input.value, 12);
+            active = items.length ? 0 : -1;
+            if (!items.length) {
+              hide();
+              return;
+            }
+            suggestEl.innerHTML = items.map(function (h, i) {
+              return '<li class="meshmap-vtrace-suggest-item' +
+                (i === 0 ? ' meshmap-vtrace-suggest-active' : '') +
+                '" data-idx="' + i + '" tabindex="-1">' + escapeHtml(h.name) + '</li>';
+            }).join('');
+            L.DomUtil.addClass(suggestEl, 'meshmap-vtrace-suggest-open');
+            Array.prototype.forEach.call(
+              suggestEl.querySelectorAll('.meshmap-vtrace-suggest-item'),
+              function (li) {
+                li.addEventListener('mousedown', function (ev) {
+                  ev.preventDefault();
+                  pick(parseInt(li.getAttribute('data-idx'), 10));
+                });
+              }
+            );
+          }
+
+          function highlight(idx) {
+            active = idx;
+            Array.prototype.forEach.call(
+              suggestEl.querySelectorAll('.meshmap-vtrace-suggest-item'),
+              function (li, i) {
+                if (i === idx) L.DomUtil.addClass(li, 'meshmap-vtrace-suggest-active');
+                else L.DomUtil.removeClass(li, 'meshmap-vtrace-suggest-active');
+              }
+            );
+          }
+
+          function pick(idx) {
+            var hit = items[idx];
+            if (!hit) return;
+            input.value = hit.name;
+            hide();
+            if (typeof onPicked === 'function') onPicked(hit.name);
+            persistFormFields();
+          }
+
+          input.addEventListener('input', render);
+          input.addEventListener('focus', render);
+          input.addEventListener('blur', function () {
+            setTimeout(hide, 150);
+          });
+          input.addEventListener('keydown', function (ev) {
+            if (ev.key === 'ArrowDown') {
+              if (!items.length) return;
+              ev.preventDefault();
+              highlight((active + 1) % items.length);
+            } else if (ev.key === 'ArrowUp') {
+              if (!items.length) return;
+              ev.preventDefault();
+              highlight(active <= 0 ? items.length - 1 : active - 1);
+            } else if (ev.key === 'Enter') {
+              if (active >= 0 && items.length) {
+                ev.preventDefault();
+                pick(active);
+              }
+            } else if (ev.key === 'Escape') {
+              hide();
+            }
+          });
+        }
 
         function togglePanel(open, opts) {
           opts = opts || {};
@@ -2277,6 +2399,11 @@
         destIn.addEventListener('blur', persistFormFields);
         nIn.addEventListener('change', persistFormFields);
         paste.addEventListener('blur', persistFormFields);
+        // Custom suggest: Android Chrome often ignores <datalist>.
+        bindNodeSuggest(sourceIn, sourceSuggest, function () {
+          scheduleStablerouteCheck();
+        });
+        bindNodeSuggest(destIn, destSuggest);
 
         function reportTextForCopy() {
           return state.rawText ||
@@ -2421,7 +2548,10 @@
             setBusy(false);
           }
         }
-        directBtn.addEventListener('click', function () { doRun(true); });
+        directBtn.addEventListener('click', function () {
+          // Mesh page → talk to the node CGI; otherwise meshinfo /trace.
+          doRun(canDirectRun());
+        });
 
         updateConsole();
         return root;
@@ -2485,7 +2615,7 @@
       // closed tool does not reappear (or re-enable its layer) on refresh.
       state.panelOpen = !!saved.panelOpen;
       if (saved.modeTab === 'live' || saved.modeTab === 'paste') {
-        state.modeTab = saved.modeTab;
+        state.modeTab = (saved.modeTab === 'live' && canLiveRun()) ? 'live' : 'paste';
         if (typeof control._setModeTab === 'function') {
           control._setModeTab(state.modeTab, { skipSave: true });
         }

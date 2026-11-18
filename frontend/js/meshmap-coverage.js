@@ -82,7 +82,8 @@
     bands: [],
     channels: [],
     range: DEFAULT_RANGE,
-    panelOpen: false
+    panelOpen: false,
+    panelMinimized: false
   };
   var control = null;
   var syncingLayer = false;
@@ -489,7 +490,8 @@
       bands: [],
       channels: [],
       range: DEFAULT_RANGE,
-      panelOpen: false
+      panelOpen: false,
+      panelMinimized: false
     };
     if (!window.MeshmapSession) return;
     var s = MeshmapSession.read();
@@ -501,6 +503,9 @@
       state.panelOpen = c.panelOpen;
     } else {
       state.panelOpen = state.mode !== 'off';
+    }
+    if (typeof c.panelMinimized === 'boolean') {
+      state.panelMinimized = !!c.panelMinimized && state.panelOpen;
     }
     if (typeof c.hideUnknown === 'boolean') state.hideUnknown = c.hideUnknown;
     if (Array.isArray(c.names)) state.names = c.names.slice();
@@ -571,6 +576,7 @@
       mode: state.mode,
       hideUnknown: !!state.hideUnknown,
       panelOpen: !!state.panelOpen,
+      panelMinimized: !!state.panelMinimized,
       names: state.names.slice(),
       colors: (function () {
         var out = {};
@@ -973,7 +979,12 @@
 
       var panel = L.DomUtil.create('div', 'meshmap-coverage-panel', container);
       panel.innerHTML =
-        '<div class="meshmap-coverage-header">Radio Coverage</div>' +
+        '<div class="meshmap-coverage-header">' +
+        '<span class="meshmap-coverage-header-title">Radio Coverage</span>' +
+        '<span class="meshmap-coverage-header-actions">' +
+        '<button type="button" class="meshmap-coverage-minimize" title="Minimize" aria-label="Minimize">−</button>' +
+        '<button type="button" class="meshmap-coverage-close" title="Close" aria-label="Close">×</button>' +
+        '</span></div>' +
         '<div class="meshmap-coverage-section meshmap-coverage-show-row">' +
         '<div class="meshmap-coverage-show-main">' +
         '<div class="meshmap-coverage-label">Show coverage</div>' +
@@ -1088,9 +1099,31 @@
 
       L.DomEvent.on(button, 'click', function (ev) {
         L.DomEvent.preventDefault(ev);
-        if (self.isExpanded()) self.collapse();
-        else self.expand();
+        // Active + panel visible → minimize (see map). Minimized → reopen filters.
+        // Fully off → open and enable coverage.
+        if (self.isPanelVisible()) {
+          self.minimize();
+        } else if (self.isExpanded() || state.panelMinimized) {
+          self.expand({ restore: true });
+        } else {
+          self.expand();
+        }
       });
+
+      var minimizeBtn = panel.querySelector('.meshmap-coverage-minimize');
+      var closeBtn = panel.querySelector('.meshmap-coverage-close');
+      if (minimizeBtn) {
+        L.DomEvent.on(minimizeBtn, 'click', function (ev) {
+          L.DomEvent.preventDefault(ev);
+          self.minimize();
+        });
+      }
+      if (closeBtn) {
+        L.DomEvent.on(closeBtn, 'click', function (ev) {
+          L.DomEvent.preventDefault(ev);
+          self.collapse();
+        });
+      }
 
       L.DomEvent.on(this._modeSelect, 'change', function () {
         setMode(self._modeSelect.value);
@@ -1177,6 +1210,10 @@
       return L.DomUtil.hasClass(this._container, 'meshmap-coverage-expanded');
     },
 
+    isPanelVisible: function () {
+      return !!(this._panel && L.DomUtil.hasClass(this._panel, 'meshmap-coverage-panel-open'));
+    },
+
     isCompactUi: function () {
       if (window.MeshmapMobile && typeof MeshmapMobile.isCompactUi === 'function') {
         return !!MeshmapMobile.isCompactUi();
@@ -1203,10 +1240,12 @@
       L.DomUtil.addClass(this._panel, 'meshmap-coverage-panel-open');
       this._dock(this.isCompactUi());
       state.panelOpen = true;
+      state.panelMinimized = false;
       if (opts.restore) {
         // Re-open UI after refresh; keep saved Show coverage mode as-is.
         setLayerVisible(state.mode !== 'off');
         redraw();
+        saveState();
         return;
       }
       // Icon is the enable switch (no longer in the layer picker).
@@ -1215,7 +1254,25 @@
         setLayerVisible(true);
         saveState();
       }
-      this._nameInput.focus();
+      if (this._nameInput && !opts.skipFocus) this._nameInput.focus();
+    },
+
+    // Hide the filter sheet but keep coverage drawn on the map (mobile-friendly).
+    minimize: function () {
+      if (!this._panel) return;
+      L.DomUtil.removeClass(this._panel, 'meshmap-coverage-panel-open');
+      this._hideSuggest();
+      this.closePropsDialog();
+      this._dock(false);
+      // Keep the icon highlighted so coverage stays obviously "on".
+      L.DomUtil.addClass(this._container, 'meshmap-coverage-expanded');
+      state.panelOpen = true;
+      state.panelMinimized = true;
+      if (state.mode === 'off') setMode('node');
+      else {
+        setLayerVisible(true);
+        saveState();
+      }
     },
 
     collapse: function () {
@@ -1225,6 +1282,7 @@
       this.closePropsDialog();
       this._dock(false);
       state.panelOpen = false;
+      state.panelMinimized = false;
       // Closing the panel disables coverage on the map.
       if (state.mode !== 'off') setMode('off');
       else saveState();
@@ -1627,8 +1685,16 @@
     control = new CoverageControl();
     control.addTo(map);
     // onAdd forces the layer off until the panel is open; restore panel + layer.
-    if (state.panelOpen && control && typeof control.expand === 'function') {
-      control.expand({ restore: true });
+    if (state.panelOpen && control) {
+      if (state.panelMinimized && typeof control.minimize === 'function') {
+        // Coverage stays on; filter sheet stays tucked away.
+        L.DomUtil.addClass(control._container, 'meshmap-coverage-expanded');
+        setLayerVisible(state.mode !== 'off');
+        redraw();
+        control.minimize();
+      } else if (typeof control.expand === 'function') {
+        control.expand({ restore: true, skipFocus: true });
+      }
     }
   }
 

@@ -211,6 +211,50 @@
 	margin: 4px 0;
 }
 
+.meshmap-vtrace-node-field {
+	position: relative;
+}
+
+.meshmap-vtrace-suggest {
+	display: none;
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 100%;
+	z-index: 1205;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	max-height: 180px;
+	overflow-y: auto;
+	background: #fff;
+	border: 1px solid #999;
+	border-radius: 3px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}
+
+.meshmap-vtrace-suggest.meshmap-vtrace-suggest-open {
+	display: block;
+}
+
+.meshmap-vtrace-suggest-item {
+	padding: 8px 10px;
+	font-size: 13px;
+	font-weight: normal;
+	cursor: pointer;
+	border-top: 1px solid #eee;
+	color: #222;
+}
+
+.meshmap-vtrace-suggest-item:first-child {
+	border-top: 0;
+}
+
+.meshmap-vtrace-suggest-item:hover,
+.meshmap-vtrace-suggest-active {
+	background: #e8f0fe;
+}
+
 .meshmap-vtrace-field input,
 .meshmap-vtrace-field select,
 .meshmap-vtrace-paste {
