@@ -806,6 +806,84 @@
     return out;
   }
 
+  /**
+   * When Spiderfy is off, co-located hops share one lat/lng and used to grow a
+   * fake spur into empty map space. Fan those vertices a few pixels apart (trace
+   * overlay only) so segments still terminate on hop markers.
+   */
+  function nudgeCollocatedVertices(vertices) {
+    if (!map || !vertices || vertices.length < 2) return;
+    var buckets = {};
+    vertices.forEach(function (v, idx) {
+      if (!v || !v.known || v.lat == null || v.lon == null) return;
+      var pt = map.latLngToLayerPoint(L.latLng(v.lat, v.lon));
+      var key = Math.round(pt.x / 3) + ':' + Math.round(pt.y / 3);
+      if (!buckets[key]) buckets[key] = [];
+      buckets[key].push({ v: v, idx: idx, pt: pt });
+    });
+    Object.keys(buckets).forEach(function (key) {
+      var group = buckets[key];
+      if (group.length < 2) return;
+      group.sort(function (a, b) {
+        var ka = nodeKey(a.v.hostname || (a.v.hop && a.v.hop.hostname) || a.idx);
+        var kb = nodeKey(b.v.hostname || (b.v.hop && b.v.hop.hostname) || b.idx);
+        return ka < kb ? -1 : ka > kb ? 1 : a.idx - b.idx;
+      });
+      var n = group.length;
+      var cx = 0;
+      var cy = 0;
+      group.forEach(function (g) {
+        cx += g.pt.x;
+        cy += g.pt.y;
+      });
+      cx /= n;
+      cy /= n;
+      var radius = Math.max(14, 8 + n * 4);
+      for (var i = 0; i < n; i++) {
+        var ang = (2 * Math.PI * i) / n - Math.PI / 2;
+        var ll = map.layerPointToLatLng(L.point(
+          cx + radius * Math.cos(ang),
+          cy + radius * Math.sin(ang)
+        ));
+        group[i].v.lat = ll.lat;
+        group[i].v.lon = ll.lng;
+        group[i].v.nudged = true;
+      }
+    });
+  }
+
+  function drawVertexMarkers(vertices, color, hopPopupOpts) {
+    vertices.forEach(function (v) {
+      if (!v || !v.known || v.lat == null || v.lon == null) return;
+      if (v.isSource) {
+        var srcCircle = L.circleMarker([v.lat, v.lon], {
+          radius: 8,
+          color: color,
+          weight: 2,
+          fillColor: color,
+          fillOpacity: 0.9,
+          opacity: 1
+        });
+        srcCircle.bindPopup(wrapVtracePopup(
+          '<div class="meshmap-vtrace-popup-title">Source</div>' +
+          '<div>' + escapeHtml(v.hostname || 'source') + '</div>'
+        ), hopPopupOpts);
+        traceLayer.addLayer(srcCircle);
+        return;
+      }
+      var circle = L.circleMarker([v.lat, v.lon], {
+        radius: 6,
+        color: color,
+        weight: 2,
+        fillColor: '#fff',
+        fillOpacity: 0.95,
+        opacity: 1
+      });
+      if (v.hop) circle.bindPopup(hopPopupHtml(v.hop, (v.pathIndex || 1)), hopPopupOpts);
+      traceLayer.addLayer(circle);
+    });
+  }
+
   function drawDoc() {
     clearDraw();
     var unresolved = [];
@@ -833,27 +911,15 @@
           hop: null,
           known: true,
           isSource: true,
-          hostname: src.hostname || src.node || (doc.source || null)
+          hostname: src.hostname || src.node || (doc.source || null),
+          pathIndex: path.index
         });
-        var srcCircle = L.circleMarker([src.lat, src.lon], {
-          radius: 8,
-          color: color,
-          weight: 2,
-          fillColor: color,
-          fillOpacity: 0.9,
-          opacity: 1
-        });
-        srcCircle.bindPopup(wrapVtracePopup(
-          '<div class="meshmap-vtrace-popup-title">Source</div>' +
-          '<div>' + escapeHtml(src.hostname || src.node || doc.source || 'source') + '</div>'
-        ), hopPopupOpts);
-        traceLayer.addLayer(srcCircle);
       }
       (path.hops || []).forEach(function (hop) {
         var pos = resolveHopLatLon(hop);
         if (!pos) {
           unresolved.push((hop.hostname || hop.ip || '*') + ' (path ' + path.index + ')');
-          vertices.push({ lat: null, lon: null, hop: hop, known: false });
+          vertices.push({ lat: null, lon: null, hop: hop, known: false, pathIndex: path.index });
           return;
         }
         // Only collapse hop1 into source when it is the same node — not when a
@@ -866,18 +932,17 @@
             return;
           }
         }
-        vertices.push({ lat: pos.lat, lon: pos.lon, hop: hop, known: true });
-        var circle = L.circleMarker([pos.lat, pos.lon], {
-          radius: 6,
-          color: color,
-          weight: 2,
-          fillColor: '#fff',
-          fillOpacity: 0.95,
-          opacity: 1
+        vertices.push({
+          lat: pos.lat,
+          lon: pos.lon,
+          hop: hop,
+          known: true,
+          hostname: hop.hostname || hop.ip || null,
+          pathIndex: path.index
         });
-        circle.bindPopup(hopPopupHtml(hop, path.index), hopPopupOpts);
-        traceLayer.addLayer(circle);
       });
+      nudgeCollocatedVertices(vertices);
+      drawVertexMarkers(vertices, color, hopPopupOpts);
       drawPathSegments(vertices, color, path, offsetPx);
     });
     bringTraceToFront();
@@ -989,7 +1054,7 @@
         var text = hopLabelText(v.hop);
         if (text) {
           var drawn = offsetPolyline(
-            ensureVisibleSegment([[lastKnown.lat, lastKnown.lon], [v.lat, v.lon]]),
+            [[lastKnown.lat, lastKnown.lon], [v.lat, v.lon]],
             offsetPx || 0
           );
           if (drawn && drawn.length >= 2) {
@@ -1029,26 +1094,10 @@
     drawHopLabels(vertices, color, offsetPx);
   }
 
-  /** Keep a short stub visible when two hops share GPS (same-tower DtD). */
-  function ensureVisibleSegment(coords) {
-    if (!map || !coords || coords.length < 2) return coords;
-    var a = coords[0];
-    var b = coords[coords.length - 1];
-    if (!a || !b) return coords;
-    var p1 = map.latLngToLayerPoint(L.latLng(a[0], a[1]));
-    var p2 = map.latLngToLayerPoint(L.latLng(b[0], b[1]));
-    var dx = p2.x - p1.x;
-    var dy = p2.y - p1.y;
-    if (Math.sqrt(dx * dx + dy * dy) >= 6) return coords;
-    var ll = map.layerPointToLatLng(L.point(p2.x + 12, p2.y - 12));
-    var out = coords.slice();
-    out[out.length - 1] = [ll.lat, ll.lng];
-    return out;
-  }
-
   function addPathLine(coords, color, path, dotted, offsetPx, fromVertex, toVertex) {
     if (!coords || coords.length < 2) return;
-    var drawn = offsetPolyline(ensureVisibleSegment(coords), offsetPx || 0);
+    // Near-zero segments (same GPS) are avoided by nudgeCollocatedVertices.
+    var drawn = offsetPolyline(coords, offsetPx || 0);
     var opts = {
       color: color,
       weight: dotted ? 4 : 5,
