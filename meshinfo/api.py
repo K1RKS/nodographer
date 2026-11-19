@@ -41,6 +41,7 @@ from trace_proxy import (
     TRACE_CFG_KEY,
     TRACE_SEM_KEY,
     handle_trace,
+    resolve_localnode_info,
 )
 
 API_PREFIX = '/api/v1'
@@ -139,6 +140,8 @@ async def serve_status(request: web.Request) -> web.Response:
     payload['ageSec'] = _age_sec((manifest or {}).get('publishedAt'))
     cfg = request.app.get(TRACE_CFG_KEY) or {}
     payload['traceProxy'] = bool(cfg.get('enabled'))
+    # Real mesh hostname for "localnode" when the poller host IP is a polled node.
+    payload['localnode'] = resolve_localnode_info(data_dir)
     return _json_response(payload)
 
 
@@ -153,12 +156,14 @@ async def healthz(request: web.Request) -> web.Response:
 
 async def index(request: web.Request) -> web.Response:
     cfg = request.app.get(TRACE_CFG_KEY) or {}
+    data_dir = request.app[DATA_DIR_KEY]
     return _json_response({
         'service': 'meshinfo',
         'files': sorted(SERVED_FILES | {STATUS}),
         'prefix': API_PREFIX + '/',
         'traceProxy': bool(cfg.get('enabled')),
         'traceEndpoint': API_PREFIX + '/trace' if cfg.get('enabled') else None,
+        'localnode': resolve_localnode_info(data_dir),
     })
 
 

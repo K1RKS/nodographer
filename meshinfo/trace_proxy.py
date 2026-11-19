@@ -167,6 +167,77 @@ def resolve_source_ip(index: Dict[str, str], source: str) -> Optional[str]:
     return None
 
 
+def _hostname_for_ip(data_dir: Path, ip: str) -> Optional[str]:
+    """Best-effort mesh node hostname for an IP from the current snapshot."""
+    snap = current_snapshot_dir(data_dir)
+    if snap is None or not ip:
+        return None
+    map_path = snap / 'map_data.json'
+    if not map_path.exists():
+        return None
+    try:
+        data = json.loads(map_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return None
+    devices = (data or {}).get('allDevices') or {}
+    if not isinstance(devices, dict):
+        return None
+    for band_nodes in devices.values():
+        if not isinstance(band_nodes, list):
+            continue
+        for node in band_nodes:
+            if not isinstance(node, dict):
+                continue
+            if str(node.get('wlan_ip') or '') == ip:
+                name = node.get('node')
+                if name:
+                    return str(name)
+    return None
+
+
+def resolve_localnode_info(data_dir: Path) -> Dict[str, Optional[str]]:
+    """
+    Describe what "localnode" means on this meshinfo host.
+
+    alias: configured/DNS name (usually localnode.local.mesh)
+    ip: private IPv4 from DNS (SSRF-safe), if any
+    name: polled mesh node hostname for that IP, if present in the snapshot
+
+    Public meshinfo VMs often resolve localnode to themselves (or a gateway)
+    with no CGI — then name is null and the map should not default Source to it.
+    """
+    alias = 'localnode.local.mesh'
+    snap = current_snapshot_dir(data_dir)
+    if snap is not None:
+        map_path = snap / 'map_data.json'
+        if map_path.exists():
+            try:
+                data = json.loads(map_path.read_text(encoding='utf-8'))
+                configured = ((data or {}).get('mapInfo') or {}).get('localnode')
+                if configured:
+                    alias = str(configured).strip() or alias
+            except (OSError, json.JSONDecodeError):
+                pass
+    host = alias if '.' in alias else 'localnode.local.mesh'
+    ip = dns_resolve_ipv4(host)
+    name = _hostname_for_ip(data_dir, ip) if ip else None
+    # If DNS IP is already indexed under a short name, prefer that.
+    if ip and not name:
+        index = load_node_index(data_dir)
+        for key, indexed_ip in index.items():
+            if indexed_ip != ip:
+                continue
+            if is_localnode_alias(key) or key == ip:
+                continue
+            # Prefer bare hostnames over dotted FQDNs.
+            if '.' not in key:
+                name = key
+                break
+            if name is None:
+                name = key.split('.')[0]
+    return {'alias': alias, 'ip': ip, 'name': name}
+
+
 def build_node_url(
     tool: str,
     source_ip: str,

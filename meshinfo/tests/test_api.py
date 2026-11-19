@@ -105,8 +105,41 @@ async def test_status_merges_manifest(aiohttp_client, tmp_path, publisher):
     assert status['snapshot']['snapshotId'] == manifest['snapshotId']
     assert status['snapshot']['nodeCount'] == 10
     assert status['ageSec'] >= 0
+    assert isinstance(status.get('localnode'), dict)
+    assert 'alias' in status['localnode']
+    assert 'ip' in status['localnode']
+    assert 'name' in status['localnode']
     health = await (await client.get('/healthz')).json()
     assert health['ok'] and health['snapshot'] == manifest['snapshotId']
+
+
+async def test_status_localnode_name_from_snapshot(aiohttp_client, tmp_path, monkeypatch):
+    from publisher import SnapshotPublisher
+
+    pub = SnapshotPublisher(tmp_path)
+    map_data = {
+        'mapInfo': {'localnode': 'localnode.local.mesh'},
+        'allDevices': {
+            '2ghz': [{
+                'node': 'K1RKS-Gateway',
+                'wlan_ip': '10.1.2.3',
+                'lat': 45.0,
+                'lon': -122.0,
+            }],
+        },
+    }
+    pub.publish({
+        'map_data.json': json.dumps(map_data),
+        'node_report_data.json': '[]',
+        'nodes.kml': '<kml/>',
+        'nodes.csv': 'node\n',
+        'nodes.json': json.dumps({'nodes': []}),
+    }, {'nodeCount': 1, 'localnode': 'localnode.local.mesh'})
+    monkeypatch.setattr('trace_proxy.dns_resolve_ipv4', lambda host: '10.1.2.3')
+    client = await aiohttp_client(create_app(tmp_path))
+    status = await (await client.get('/api/v1/status.json')).json()
+    assert status['localnode']['ip'] == '10.1.2.3'
+    assert status['localnode']['name'] == 'K1RKS-Gateway'
 
 
 async def test_gzip(aiohttp_client, tmp_path, publisher):

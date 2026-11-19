@@ -1097,34 +1097,58 @@
     restoreMapLinkClicks();
   }
 
-  function meshinfoTraceUrl() {
+  function meshinfoApiBaseUrl() {
     if (!window.NodographerConfig || typeof NodographerConfig.dataUrl !== 'function') {
       return '';
     }
     try {
       var cfg = NodographerConfig.config || {};
       var meshinfo = cfg.meshinfo || {};
-      if (meshinfo.traceUrl) {
-        return String(meshinfo.traceUrl);
-      }
       var baseStr = String(meshinfo.baseUrl || '');
       var u = new URL(NodographerConfig.dataUrl(''));
       var path = u.pathname || '';
       // Absolute /api/v1/, nginx proxy "meshinfo/", or any non-snapshot base.
       // Skip local snapshot dirs like "meshinfo/current/" or "data/".
       if (path.indexOf('/api/v1') >= 0 || baseStr.indexOf('api/v1') >= 0) {
-        return new URL('trace', u).href;
+        return u.href;
       }
       if (/\/current\/?$/i.test(path) || /\/data\/?$/i.test(path)) {
         return '';
       }
       if (baseStr && !/current\/?\s*$/i.test(baseStr) && !/^data\/?$/i.test(baseStr.trim())) {
-        return new URL('trace', u).href;
+        return u.href;
       }
     } catch (err) {
       return '';
     }
     return '';
+  }
+
+  function meshinfoTraceUrl() {
+    try {
+      var cfg = (window.NodographerConfig && NodographerConfig.config) || {};
+      var meshinfo = cfg.meshinfo || {};
+      if (meshinfo.traceUrl) {
+        return String(meshinfo.traceUrl);
+      }
+    } catch (err) { /* ignore */ }
+    var base = meshinfoApiBaseUrl();
+    if (!base) return '';
+    try {
+      return new URL('trace', base).href;
+    } catch (err2) {
+      return '';
+    }
+  }
+
+  function meshinfoStatusUrl() {
+    var base = meshinfoApiBaseUrl();
+    if (!base) return '';
+    try {
+      return new URL('status.json', base).href;
+    } catch (err) {
+      return '';
+    }
   }
 
   function onMeshHost() {
@@ -1904,7 +1928,6 @@
           '<datalist id="meshmap-vtrace-nodes"></datalist>' +
           '<div class="meshmap-vtrace-row">' +
           '<button type="button" class="meshmap-vtrace-direct" hidden>Run</button>' +
-          '<button type="button" class="meshmap-vtrace-clear-live">Clear</button>' +
           '</div>' +
           '<div class="meshmap-vtrace-progress" hidden>' +
           '<div class="meshmap-vtrace-progress-label"></div>' +
@@ -1956,7 +1979,6 @@
         var paste = panel.querySelector('.meshmap-vtrace-paste');
         var parseBtn = panel.querySelector('.meshmap-vtrace-parse');
         var clearBtn = panel.querySelector('.meshmap-vtrace-clear');
-        var clearLiveBtn = panel.querySelector('.meshmap-vtrace-clear-live');
         var panelCloseBtn = panel.querySelector('.meshmap-vtrace-panel-close');
         var panelHeader = panel.querySelector('.meshmap-vtrace-header');
         var toolSel = panel.querySelector('.meshmap-vtrace-tool');
@@ -1999,9 +2021,6 @@
           opt.value = name;
           list.appendChild(opt);
         });
-        if (mapInfo && mapInfo.localnode) {
-          sourceIn.value = mapInfo.localnode;
-        }
 
         // Public HTTPS + snapshot data cannot Live-run (mixed content blocks
         // http://node.local.mesh), so hide Live and keep Paste-only there.
@@ -2010,6 +2029,21 @@
         directBtn.hidden = !liveOk;
         if (liveOk && state.modeTab !== 'paste' && state.modeTab !== 'live') {
           state.modeTab = canDirectRun() ? 'live' : 'paste';
+        }
+
+        // Direct (.local.mesh page): default Source to mapInfo.localnode.
+        // Meshinfo API: never default to bare "localnode" (often the API host,
+        // which has no CGI). Prefer status.localnode.name when the poller IP
+        // is a real polled node; otherwise leave Source empty.
+        function applyDefaultLiveSource(preferredName) {
+          if (!sourceIn || sourceIn.value.trim()) return;
+          var name = String(preferredName || '').trim();
+          if (!name) return;
+          if (/^localnode(\.local\.mesh)?$/i.test(name) && !canDirectRun()) return;
+          sourceIn.value = name;
+        }
+        if (canDirectRun() && mapInfo && mapInfo.localnode) {
+          applyDefaultLiveSource(mapInfo.localnode);
         }
 
         this._panel = panel;
@@ -2491,7 +2525,6 @@
           saveSession();
         }
         clearBtn.addEventListener('click', clearTraceUi);
-        if (clearLiveBtn) clearLiveBtn.addEventListener('click', clearTraceUi);
 
         async function doRun(direct) {
           var tool = toolSel.value;
@@ -2726,11 +2759,29 @@
     });
     bindSpiderfyRedraw();
     restoreSession();
-    if (!readSavedSession() && mapInfo && mapInfo.localnode && control._form && control._form.sourceIn) {
-      if (!control._form.sourceIn.value) {
+    // After session restore: fill empty Source for mesh pages / API localnode name.
+    (function fillDefaultSource() {
+      if (!control || !control._form || !control._form.sourceIn) return;
+      if (control._form.sourceIn.value.trim()) return;
+      if (canDirectRun() && mapInfo && mapInfo.localnode) {
         control._form.sourceIn.value = mapInfo.localnode;
+        return;
       }
-    }
+      if (!canMeshinfoRun()) return;
+      var statusUrl = meshinfoStatusUrl();
+      if (!statusUrl) return;
+      fetch(statusUrl, { method: 'GET', cache: 'no-store' }).then(function (resp) {
+        return resp.ok ? resp.json() : null;
+      }).then(function (status) {
+        if (!control || !control._form || !control._form.sourceIn) return;
+        if (control._form.sourceIn.value.trim()) return;
+        var ln = status && status.localnode;
+        var name = ln && (ln.name || ln.hostname);
+        if (name && !/^localnode(\.local\.mesh)?$/i.test(String(name))) {
+          control._form.sourceIn.value = String(name);
+        }
+      }).catch(function () { /* ignore */ });
+    })();
     renderPathControls();
     updateConsole();
   }
