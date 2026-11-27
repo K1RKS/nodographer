@@ -344,7 +344,7 @@ class MySQLAdapter:
                         `link_info` MEDIUMTEXT DEFAULT NULL,
                         `hopsAway` INT DEFAULT 0,
                         `meshRF` VARCHAR(10) DEFAULT 'on',
-                        `last_seen` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        `last_seen` TIMESTAMP NULL DEFAULT NULL,
                         `antGain` DECIMAL(5,2) DEFAULT 0,
                         `antBeam` DECIMAL(5,2) DEFAULT 0,
                         `antDesc` VARCHAR(255) DEFAULT NULL,
@@ -387,6 +387,25 @@ class MySQLAdapter:
                         logging.info(f"Widened {sql_db_tbl_node}.board_id from {cur_len} to 255 characters")
                 except Exception as e:
                     logging.warning(f"Could not widen board_id in {sql_db_tbl_node}: {e}")
+
+                # last_seen must only change on successful polls. Drop ON UPDATE CURRENT_TIMESTAMP
+                # so topology/link updates do not refresh the retention clock.
+                try:
+                    await cur.execute(
+                        "SELECT EXTRA FROM information_schema.COLUMNS "
+                        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = 'last_seen'",
+                        (sql_db_tbl_node,)
+                    )
+                    row = await cur.fetchone()
+                    extra = (list(row.values())[0] if isinstance(row, dict) else row[0]) if row else ''
+                    if extra and 'on update' in str(extra).lower():
+                        await cur.execute(
+                            f"ALTER TABLE `{sql_db_tbl_node}` "
+                            "MODIFY COLUMN `last_seen` TIMESTAMP NULL DEFAULT NULL"
+                        )
+                        logging.info(f"Removed ON UPDATE from {sql_db_tbl_node}.last_seen")
+                except Exception as e:
+                    logging.warning(f"Could not normalize last_seen column in {sql_db_tbl_node}: {e}")
                 
                 # Create map_info table if not exists
                 await cur.execute(f"""
@@ -485,7 +504,7 @@ class MySQLAdapter:
                         api_version=%s, board_id=%s, firmware_mfg=%s, grid_square=%s,
                         lan_ip=%s, services=%s, description=%s, mesh_supernode=%s,
                         mesh_gateway=%s, freq=%s, link_info=COALESCE(%s, link_info), hopsAway=%s,
-                        meshRF=%s, last_seen=%s, antGain=%s, antBeam=%s,
+                        meshRF=%s, last_seen=COALESCE(%s, last_seen), antGain=%s, antBeam=%s,
                         antDesc=%s, antBuiltin=%s, response_time_ms=%s,
                         antAzimuth=%s, antElevation=%s, antHeight=%s, lqmDistanceM=%s
                 """
@@ -526,12 +545,45 @@ class MySQLAdapter:
                     logging.error(f"Node data: node={node_data.node}, lat={node_data.lat}, lon={node_data.lon}, wlan_ip={node_data.wlan_ip}")
                     raise
 
+    async def upsert_topology_node(
+        self,
+        wlan_ip: str,
+        hops_away: int,
+        link_info_hex: str,
+        node_name: Optional[str] = None,
+    ):
+        """Insert/update topology-only fields without clobbering polled data or last_seen.
+
+        New nodes get last_seen=UTC_TIMESTAMP() so they enter the retention window.
+        Existing rows keep their last_seen and all poll-derived columns intact.
+        """
+        sql_db_tbl_node = self.config.get('database', 'table_node', 'node_info')
+        name = (node_name or '').strip() or wlan_ip
+        link_val = link_info_hex if link_info_hex else None
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                sql = f"""
+                    INSERT INTO `{sql_db_tbl_node}` (
+                        wlan_ip, node, hopsAway, link_info, last_seen
+                    ) VALUES (
+                        %s, %s, %s, %s, UTC_TIMESTAMP()
+                    ) ON DUPLICATE KEY UPDATE
+                        hopsAway = VALUES(hopsAway),
+                        link_info = COALESCE(VALUES(link_info), link_info),
+                        node = IF(VALUES(node) IS NOT NULL AND VALUES(node) != ''
+                                  AND VALUES(node) != VALUES(wlan_ip), VALUES(node), node),
+                        -- Keep poll time when present; only fill NULL (e.g. after a wipe)
+                        last_seen = COALESCE(last_seen, UTC_TIMESTAMP())
+                """
+                await cur.execute(sql, (wlan_ip, name, hops_away, link_val))
+
     async def update_link_info(self, wlan_ip: str, link_data: Dict):
         """Update link information for a node"""
         async with self.pool.acquire() as conn:
             async with conn.cursor() as cur:
                 link_str = pickle.dumps(link_data).hex()
-                sql = "UPDATE node_info SET link_info = %s WHERE wlan_ip = %s"
+                # Preserve last_seen explicitly (defense if column still has ON UPDATE)
+                sql = "UPDATE node_info SET link_info = %s, last_seen = last_seen WHERE wlan_ip = %s"
                 await cur.execute(sql, (link_str, wlan_ip))
 
     async def get_all_nodes(self) -> List[Dict]:
@@ -548,7 +600,7 @@ class MySQLAdapter:
         async with self.pool.acquire() as conn:
             async with conn.cursor() as cur:
                 empty_link = pickle.dumps({}).hex()
-                sql = "UPDATE node_info SET link_info = %s WHERE wlan_ip = %s"
+                sql = "UPDATE node_info SET link_info = %s, last_seen = last_seen WHERE wlan_ip = %s"
                 await cur.execute(sql, (empty_link, wlan_ip))
 
     async def save_polling_stats(self, stats: Dict):
@@ -1568,7 +1620,7 @@ class MeshPollingDaemon:
         self.logger.info(f"Hop measurement complete")
     
     async def _update_topology_info(self, node_devices: Dict):
-        """Update database with initial topology information"""
+        """Update database with topology fields only (preserve last_seen / poll data)."""
         # Optionally enhance hopsAway using hop measurement before persisting
         await self._maybe_update_hops(node_devices)
         for ip, info in node_devices.items():
@@ -1576,13 +1628,14 @@ class MeshPollingDaemon:
             # Synthesized nodes (hopsAway=None) will be created from link data enrichment later
             if info['hopsAway'] is None:
                 continue
-            node_data = NodeInfo(
-                wlan_ip=ip,
-                hopsAway=info['hopsAway'],
-                link_info=pickle.dumps(info['link_info']).hex()
-            )
+            link_hex = pickle.dumps(info.get('link_info') or {}).hex()
             try:
-                await self.db.upsert_node(node_data)
+                await self.db.upsert_topology_node(
+                    wlan_ip=ip,
+                    hops_away=info['hopsAway'],
+                    link_info_hex=link_hex,
+                    node_name=info.get('name'),
+                )
             except Exception as e:
                 self.logger.error(f"Error updating topology for {ip}: {e}")
     
@@ -2335,7 +2388,7 @@ async def _flush_database(config: ConfigManager):
                     `link_info` MEDIUMTEXT DEFAULT NULL,
                     `hopsAway` INT DEFAULT 0,
                     `meshRF` VARCHAR(10) DEFAULT 'on',
-                    `last_seen` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    `last_seen` TIMESTAMP NULL DEFAULT NULL,
                     `antGain` DECIMAL(5,2) DEFAULT 0,
                     `antBeam` DECIMAL(5,2) DEFAULT 0,
                     `antDesc` VARCHAR(255) DEFAULT NULL,

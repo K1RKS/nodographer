@@ -1,10 +1,11 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from meshinfo_config import ConfigManager
-from meshinfoPoller import MeshPollingDaemon
+from meshinfoPoller import MeshPollingDaemon, MySQLAdapter
 from publisher import SNAPSHOT_FILES, current_snapshot_dir
 
 
@@ -25,11 +26,12 @@ class FakeDB:
         pass
 
 
-def node(name, ip, lat=44.0, lon=-120.0, channel='149'):
+def node(name, ip, lat=44.0, lon=-120.0, channel='149', last_seen=...):
     return {
         'node': name, 'wlan_ip': ip, 'lat': lat, 'lon': lon, 'channel': channel,
         'meshRF': 'on', 'board_id': '0x0', 'firmware_version': 'babel-1.0',
-        'last_seen': datetime.now(timezone.utc), 'link_info': '', 'services': 'Not Available',
+        'last_seen': datetime.now(timezone.utc) if last_seen is ... else last_seen,
+        'link_info': '', 'services': 'Not Available',
         'loadavg': '', 'mesh_supernode': 'false',
     }
 
@@ -37,7 +39,10 @@ def node(name, ip, lat=44.0, lon=-120.0, channel='149'):
 @pytest.fixture
 def daemon(tmp_path):
     cfg = tmp_path / 'meshinfo.toml'
-    cfg.write_text(f'[publish]\ndataDir = "{tmp_path / "data"}"\nminNodeRatio = 0.5\n')
+    cfg.write_text(
+        f'[publish]\ndataDir = "{tmp_path / "data"}"\nminNodeRatio = 0.5\n'
+        f'[retention]\nexpireOldNodes = true\nexpireInterval = 30\n'
+    )
     d = MeshPollingDaemon(ConfigManager(str(cfg)))
     d.db = FakeDB([node('n1', '10.0.0.1'), node('n2', '10.0.0.2', channel='none')])
     return d
@@ -96,3 +101,50 @@ async def test_node_drop_is_rejected(daemon):
     await daemon._publish_snapshot()
     assert current_snapshot_dir(daemon.publisher.data_dir) == before
     assert daemon.publisher.read_status()['state'] == 'rejected'
+
+
+async def test_missed_poll_still_published_until_expire(daemon):
+    """Nodes with older last_seen stay in the snapshot until expireInterval."""
+    now = datetime.now(timezone.utc)
+    daemon.db.nodes = [
+        node('fresh', '10.0.0.1', last_seen=now),
+        node('missed', '10.0.0.2', last_seen=now - timedelta(days=7)),
+        node('expired', '10.0.0.3', last_seen=now - timedelta(days=31)),
+        node('never', '10.0.0.4', last_seen=None),
+    ]
+    # Avoid minNodeRatio rejecting against a prior snapshot
+    daemon.publisher.data_dir.mkdir(parents=True, exist_ok=True)
+    files, meta = await daemon._build_snapshot_files('testsnap')
+    report = json.loads(files['node_report_data.json'])
+    names = {n['node'] for n in report}
+    assert names == {'fresh', 'missed'}
+    assert meta['nodeCount'] == 2
+
+
+async def test_upsert_topology_node_preserves_last_seen():
+    """Topology upsert must assign last_seen = last_seen on conflict."""
+    cfg = MagicMock()
+    cfg.get = MagicMock(side_effect=lambda *a, **k: a[2] if len(a) > 2 else k.get('default'))
+    adapter = MySQLAdapter(cfg)
+
+    cur = AsyncMock()
+    conn = MagicMock()
+    conn.cursor = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=cur),
+        __aexit__=AsyncMock(return_value=None),
+    ))
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=conn),
+        __aexit__=AsyncMock(return_value=None),
+    ))
+    adapter.pool = pool
+
+    await adapter.upsert_topology_node('10.1.2.3', 2, 'abcd', node_name='TEST-NODE')
+
+    assert cur.execute.await_count == 1
+    sql, params = cur.execute.await_args.args
+    assert 'COALESCE(last_seen, UTC_TIMESTAMP())' in sql
+    assert params[0] == '10.1.2.3'
+    assert params[1] == 'TEST-NODE'
+    assert params[2] == 2
