@@ -29,6 +29,7 @@
 				--border-color: #ddd;
 				--header-shadow: rgba(0, 0, 0, 0.05);
 				--row-hover: #fafafa;
+				--row-stripe: #d7e6f4;
 				--header-hover: #f9f9f9;
 				--link-color: #0066cc;
 				--link-hover: #0052a3;
@@ -53,6 +54,7 @@
 				--border-color: #444;
 				--header-shadow: rgba(0, 0, 0, 0.3);
 				--row-hover: #2a2a2a;
+				--row-stripe: #2c3f55;
 				--header-hover: #252525;
 				--link-color: #66b3ff;
 				--link-hover: #99ccff;
@@ -75,8 +77,9 @@
 		html, body {
 			margin: 0;
 			padding: 0;
-			min-height: 100%;
-			min-height: 100dvh;
+			height: 100%;
+			height: 100dvh;
+			overflow: hidden; /* scrolling lives in the table pane */
 		}
 
 		body {
@@ -87,8 +90,9 @@
 			color: var(--text-primary);
 			display: flex;
 			flex-direction: column;
-			min-height: 100vh;
-			min-height: 100dvh;
+			height: 100%;
+			height: 100dvh;
+			max-height: 100dvh;
 			padding-left: env(safe-area-inset-left, 0px);
 			padding-right: env(safe-area-inset-right, 0px);
 			padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -148,7 +152,8 @@
 			margin-left: auto;
 		}
 
-		#exportBtn {
+		#exportBtn,
+		#columnsBtn {
 			background: var(--btn-export-bg);
 			color: var(--btn-export-text);
 			display: inline-flex;
@@ -156,15 +161,92 @@
 			gap: 6px;
 		}
 
-		#exportBtn:hover {
+		#exportBtn:hover,
+		#columnsBtn:hover {
 			background: var(--btn-export-bg-hover);
 			box-shadow: 0 4px 12px var(--btn-export-shadow);
 			transform: translateY(-1px);
 		}
 
-		#exportBtn:active {
+		#exportBtn:active,
+		#columnsBtn:active {
 			transform: translateY(0);
 			box-shadow: 0 2px 6px var(--btn-export-shadow);
+		}
+
+		.columns-menu-wrap {
+			position: relative;
+			display: inline-flex;
+		}
+
+		#columnsPanel {
+			display: none;
+			position: absolute;
+			top: calc(100% + 6px);
+			left: 0;
+			z-index: 40;
+			min-width: 220px;
+			max-height: min(70vh, 420px);
+			overflow: auto;
+			padding: 10px 12px;
+			background: var(--bg-primary);
+			border: 1px solid var(--border-color);
+			border-radius: 6px;
+			box-shadow: 0 8px 24px var(--header-shadow);
+		}
+
+		#columnsPanel.open {
+			display: block;
+		}
+
+		#columnsPanel .columns-panel-title {
+			font-size: 11px;
+			font-weight: 600;
+			margin: 0 0 8px;
+			color: var(--text-secondary);
+		}
+
+		#columnsPanel .columns-panel-actions {
+			display: flex;
+			gap: 8px;
+			margin-bottom: 8px;
+		}
+
+		#columnsPanel .columns-panel-actions button {
+			font-size: 10px;
+			padding: 4px 8px;
+			border-radius: 4px;
+			border: 1px solid var(--border-color);
+			background: var(--bg-secondary);
+			color: var(--text-primary);
+		}
+
+		#columnsList {
+			display: flex;
+			flex-direction: column;
+			gap: 4px;
+		}
+
+		#columnsList label {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			font-size: 11px;
+			color: var(--text-primary);
+			cursor: pointer;
+			padding: 3px 2px;
+			border-radius: 3px;
+		}
+
+		#columnsList label:hover {
+			background: var(--row-hover);
+		}
+
+		#columnsList input {
+			margin: 0;
+			width: 14px;
+			height: 14px;
+			cursor: pointer;
 		}
 
 		.back-btn {
@@ -187,10 +269,37 @@
 		#tableContainer {
 			flex: 1 1 auto;
 			min-height: 0;
-			height: auto;
+			overflow: hidden; /* child table row scrolls so bars stay in viewport */
+			display: flex;
+			flex-direction: column;
+			background: var(--bg-primary);
+		}
+
+		/* DataTables 2 layout: keep paging visible; scroll the table row only */
+		#meshdata_wrapper.dt-container,
+		#tableContainer .dt-container {
+			flex: 1 1 auto;
+			min-height: 0;
+			display: flex;
+			flex-direction: column;
+			overflow: hidden;
+			padding: 0 !important;
+			width: 100%;
+		}
+
+		#tableContainer .dt-layout-row.dt-layout-table {
+			flex: 1 1 auto;
+			min-height: 0;
 			overflow: auto;
 			-webkit-overflow-scrolling: touch;
-			background: var(--bg-primary);
+		}
+
+		#tableContainer .dt-layout-row:not(.dt-layout-table) {
+			flex: 0 0 auto;
+		}
+
+		#tableContainer .dt-layout-cell {
+			overflow: visible;
 		}
 
 		.dataTables_wrapper {
@@ -254,7 +363,9 @@
 		table#meshdata {
 			font-size: 10px;
 			border-collapse: collapse;
-			width: 100%;
+			width: max-content;
+			min-width: max-content;
+			table-layout: fixed;
 		}
 
 		#meshdata thead {
@@ -279,10 +390,37 @@
 			position: sticky;
 			top: 0;
 			z-index: 1000;
+			overflow: hidden;
+			text-overflow: ellipsis;
 		}
 
 		#meshdata thead th:hover {
 			background-color: var(--header-hover);
+		}
+
+		#meshdata thead th .col-resize-handle {
+			position: absolute;
+			top: 0;
+			right: -3px;
+			width: 8px;
+			height: 100%;
+			cursor: col-resize;
+			z-index: 1100;
+			touch-action: none;
+		}
+
+		#meshdata thead th .col-resize-handle:hover,
+		#meshdata thead th .col-resize-handle.is-dragging {
+			background: rgba(0, 102, 204, 0.28);
+		}
+
+		body.col-resizing {
+			cursor: col-resize !important;
+			user-select: none !important;
+		}
+
+		body.col-resizing #meshdata thead th {
+			cursor: col-resize !important;
 		}
 
 		#meshdata tbody td {
@@ -297,8 +435,21 @@
 			color: var(--text-primary);
 		}
 
-		#meshdata tbody tr:hover {
+		/* Zebra striping follows current display order (reapplied after sort/filter).
+		   Color the cells (not just the tr) so DataTables' inset box-shadow striping
+		   cannot wash out the background. */
+		#meshdata.display tbody tr.row-stripe > td,
+		#meshdata.dataTable tbody tr.row-stripe > td {
+			background-color: var(--row-stripe);
+			box-shadow: none;
+		}
+
+		#meshdata.display tbody tr:hover > td,
+		#meshdata.dataTable tbody tr:hover > td,
+		#meshdata.display tbody tr.row-stripe:hover > td,
+		#meshdata.dataTable tbody tr.row-stripe:hover > td {
 			background-color: var(--row-hover);
+			box-shadow: none;
 		}
 
 		#meshdata a {
@@ -311,40 +462,9 @@
 			color: var(--link-hover);
 		}
 
-		/* Column sizing by class (not position) so it survives column reordering */
-		#meshdata .col-ssid {
-			width: 100px !important;
-			max-width: 100px !important;
-			overflow: hidden;
-			text-overflow: ellipsis;
-		}
-
-		#meshdata .col-right {
-			text-align: right;
-		}
-
-		/* Narrow Model and Hardware to free space for Version */
-		#meshdata .col-model {
-			width: 80px !important;
-			max-width: 80px !important;
-			overflow: hidden;
-			text-overflow: ellipsis;
-		}
-
-		/* Allow Version column to fully display */
-		#meshdata .col-version {
-			white-space: normal;
-			overflow: visible;
-			text-overflow: clip;
-		}
-
+		#meshdata .col-right,
 		#meshdata .col-tiny {
-			width: 30px !important;
-			max-width: 30px !important;
 			text-align: right;
-			overflow: hidden;
-			text-overflow: ellipsis;
-			padding: 2px 4px !important;
 		}
 
 			.stale-last-seen {
@@ -434,10 +554,27 @@
 
 			#nodeFilter,
 			#exportBtn,
+			#columnsBtn,
 			.filter-check {
 				min-height: 44px;
 				font-size: 16px;
 				padding: 8px 12px;
+			}
+
+			#columnsPanel {
+				left: auto;
+				right: 0;
+				min-width: min(100vw - 24px, 280px);
+			}
+
+			#columnsList label {
+				font-size: 15px;
+				min-height: 36px;
+			}
+
+			#columnsList input {
+				width: 18px;
+				height: 18px;
 			}
 
 			.filter-check {
@@ -485,6 +622,17 @@
 				<option value="">All Nodes</option>
 				<option value="missing">Missing Nodes</option>
 			</select>
+			<div class="columns-menu-wrap">
+				<button type="button" id="columnsBtn" aria-expanded="false" aria-controls="columnsPanel">Display Columns</button>
+				<div id="columnsPanel" role="dialog" aria-label="Display columns">
+					<p class="columns-panel-title">Show / hide columns</p>
+					<div class="columns-panel-actions">
+						<button type="button" id="columnsShowAll">Show all</button>
+						<button type="button" id="columnsHideOptional">Hide optional</button>
+					</div>
+					<div id="columnsList"></div>
+				</div>
+			</div>
 			<button id="exportBtn">Export</button>
 		</div>
 	</header>
@@ -602,10 +750,9 @@
 				return `<span title="${data}">${data}</span>`;
 			};
 
-			const renderTruncatedCell = (data, maxLength) => {
+			const renderFullCell = (data) => {
 				if (!data) return '';
-				const truncated = data.length > maxLength ? data.substring(0, maxLength) + '…' : data;
-				return `<span title="${data}">${truncated}</span>`;
+				return `<span title="${String(data).replace(/"/g, '&quot;')}">${data}</span>`;
 			};
 
 			const isOlderThanHours = (value, hours) => {
@@ -745,6 +892,7 @@
 					
 					// Clear and reload table with new data
 					table.clear().rows.add(allNodeData).draw();
+					scheduleColumnLayout();
 				} catch (error) {
 					console.error('Error loading node data:', error);
 				}
@@ -752,10 +900,10 @@
 
 			// Initialize DataTable with static data
 			const table = new DataTable('#meshdata', {
+				autoWidth: false,
 				columns: [
 					{
 						data: null,
-						width: '40px',
 						sortable: false,
 						render: function(data, type, row, meta) {
 							// Return sequential index based on display order
@@ -764,7 +912,6 @@
 					},
 					{
 						data: 'node',
-						width: '140px',
 						render: function(data) {
 							if (!data) return '';
 							const nodeName = data.toLowerCase();
@@ -781,8 +928,7 @@
 					},
 					{
 						data: 'description',
-						width: '250px',
-						render: (data) => renderTruncatedCell(data, 40)
+						render: (data) => renderFullCell(data)
 					},
 					{
 						data: 'channel',
@@ -791,25 +937,22 @@
 					},
 					{
 						data: 'freq',
-						width: '60px',
 						render: renderCellWithTooltip
 					},
 					{
 						data: 'ssid',
-						width: '60px',
 						className: 'col-ssid',
-						noWrap: true,
-						render: (data) => renderTruncatedCell(data, 20)
+						render: (data) => renderFullCell(data)
 					},
 					{
 						data: 'model',
 						className: 'col-model',
-						render: (data) => renderTruncatedCell(data, 30)
+						render: (data) => renderFullCell(data)
 					},
 					{
 						data: 'board_id',
 						className: 'col-model',
-						render: (data) => renderTruncatedCell(data, 30)
+						render: (data) => renderFullCell(data)
 					},
 					{
 						data: 'antAzimuth',
@@ -823,7 +966,6 @@
 					},
 					{
 						data: 'active_tunnel_count',
-						width: '40px',
 						className: 'col-right',
 						type: 'num',
 						render: function(data) {
@@ -834,7 +976,6 @@
 					{
 						data: 'response_time_ms',
 						type: 'num',
-						width: '30px',
 						className: 'col-tiny',
 						render: function(data) {
 							if (!data || data === 0) return '';
@@ -844,7 +985,6 @@
 					{
 						data: 'hopsAway',
 						type: 'num',
-						width: '30px',
 						className: 'col-tiny',
 						render: function(data) {
 							if (!data || data === 0) return '';
@@ -880,6 +1020,8 @@
 				rowCallback: function(row, data, displayIndex) {
 					// Update the index column with sequential line numbers
 					$(row).find('td:first').text(displayIndex + 1);
+					// Stripe by display order so zebra banding stays correct after sort/filter
+					row.classList.toggle('row-stripe', displayIndex % 2 === 1);
 				},
 				layout: {
 					topStart: null,
@@ -958,6 +1100,338 @@
 				});
 			}
 
+			// --- Display Columns (show/hide) ---
+			const COL_VIS_KEY = 'nodographer.nodeReport.columnVisibility';
+			const COL_WIDTH_KEY = 'nodographer.nodeReport.columnWidths';
+			const ALWAYS_ON_COLUMNS = new Set(['#', 'Name']); // keep identity columns available
+			const COL_WIDTH_MIN = 36;
+			const COL_WIDTH_PAD = 16;
+			/* Soft cap for initial autofit so one long Description doesn't dominate;
+			   drag or double-click-fit can still go wider. */
+			const COL_WIDTH_AUTOFIT_MAX = 480;
+			const columnsBtn = document.getElementById('columnsBtn');
+			const columnsPanel = document.getElementById('columnsPanel');
+			const columnsList = document.getElementById('columnsList');
+			let columnLayoutTimer = null;
+			let resizeHandlesInstalled = false;
+
+			const columnTitle = (idx) => {
+				const th = table.column(idx).header();
+				if (!th) return `Column ${idx}`;
+				const clone = th.cloneNode(true);
+				clone.querySelectorAll('.col-resize-handle').forEach((el) => el.remove());
+				const titled = (th.getAttribute('title') || '').trim();
+				const text = (clone.textContent || '').trim();
+				return titled || text || `Column ${idx}`;
+			};
+
+			const loadSavedColumnWidths = () => {
+				try {
+					const raw = localStorage.getItem(COL_WIDTH_KEY);
+					if (!raw) return {};
+					const parsed = JSON.parse(raw);
+					return parsed && typeof parsed === 'object' ? parsed : {};
+				} catch (e) {
+					return {};
+				}
+			};
+
+			const saveColumnWidth = (title, px) => {
+				const saved = loadSavedColumnWidths();
+				saved[title] = Math.round(px);
+				try {
+					localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(saved));
+				} catch (e) {
+					/* ignore */
+				}
+			};
+
+			const clearSavedColumnWidth = (title) => {
+				const saved = loadSavedColumnWidths();
+				if (!Object.prototype.hasOwnProperty.call(saved, title)) return;
+				delete saved[title];
+				try {
+					localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(saved));
+				} catch (e) {
+					/* ignore */
+				}
+			};
+
+			const measureColumnContentWidth = (idx, { uncapped = false } = {}) => {
+				const th = table.column(idx).header();
+				if (!th) return COL_WIDTH_MIN;
+				const sampleTd = table.column(idx, { page: 'current' }).nodes().toArray()[0];
+				const probe = document.createElement('div');
+				probe.style.cssText = 'position:absolute;left:-99999px;top:0;visibility:hidden;white-space:nowrap;pointer-events:none;';
+				document.body.appendChild(probe);
+
+				const measureNode = (node, asHeader) => {
+					if (!node) return 0;
+					const style = window.getComputedStyle(node);
+					probe.style.fontFamily = style.fontFamily;
+					probe.style.fontSize = style.fontSize;
+					probe.style.fontWeight = asHeader ? style.fontWeight : '450';
+					probe.style.letterSpacing = style.letterSpacing;
+					const clone = node.cloneNode(true);
+					clone.querySelectorAll('.col-resize-handle').forEach((el) => el.remove());
+					const text = (clone.textContent || '').trim();
+					probe.textContent = text || (asHeader ? 'W' : '');
+					return text ? probe.offsetWidth : 0;
+				};
+
+				let max = measureNode(th, true);
+				table.column(idx, { page: 'current' }).nodes().each(function(td) {
+					max = Math.max(max, measureNode(td, false));
+				});
+				// Prefer a real body cell font if header-only column
+				if (!sampleTd) {
+					/* keep header measure */
+				}
+				document.body.removeChild(probe);
+				const padded = Math.max(COL_WIDTH_MIN, max + COL_WIDTH_PAD);
+				return uncapped ? padded : Math.min(padded, COL_WIDTH_AUTOFIT_MAX);
+			};
+
+			const applyColumnWidths = (widthsByIndex) => {
+				const tableEl = document.getElementById('meshdata');
+				let total = 0;
+				table.columns().every(function(idx) {
+					if (!this.visible()) {
+						$(this.header()).css('width', '');
+						$(this.nodes()).css('width', '');
+						return;
+					}
+					const w = widthsByIndex[idx] || COL_WIDTH_MIN;
+					total += w;
+					$(this.header()).css({ width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px' });
+					$(this.nodes()).css({ width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px' });
+				});
+				if (tableEl) {
+					tableEl.style.width = Math.max(total, 1) + 'px';
+					tableEl.style.minWidth = Math.max(total, 1) + 'px';
+					tableEl.style.maxWidth = 'none';
+					tableEl.style.tableLayout = 'fixed';
+				}
+			};
+
+			const layoutColumns = (opts = {}) => {
+				const forceAutofit = !!opts.forceAutofit;
+				const uncapped = !!opts.uncapped;
+				const onlyIdx = Number.isInteger(opts.onlyIdx) ? opts.onlyIdx : null;
+				const saved = loadSavedColumnWidths();
+				const widths = {};
+
+				table.columns().every(function(idx) {
+					if (!this.visible()) return;
+					if (onlyIdx !== null && idx !== onlyIdx) {
+						const th = this.header();
+						const current = th ? parseFloat(th.style.width) : NaN;
+						widths[idx] = Number.isFinite(current) && current > 0
+							? current
+							: measureColumnContentWidth(idx);
+						return;
+					}
+					const title = columnTitle(idx);
+					if (!forceAutofit && Object.prototype.hasOwnProperty.call(saved, title)) {
+						widths[idx] = Math.max(COL_WIDTH_MIN, Number(saved[title]) || COL_WIDTH_MIN);
+					} else {
+						widths[idx] = measureColumnContentWidth(idx, { uncapped: uncapped || forceAutofit });
+					}
+				});
+				applyColumnWidths(widths);
+			};
+
+			const scheduleColumnLayout = (opts) => {
+				if (columnLayoutTimer) clearTimeout(columnLayoutTimer);
+				columnLayoutTimer = setTimeout(() => layoutColumns(opts || {}), 30);
+			};
+
+			const installColumnResizeHandles = () => {
+				if (resizeHandlesInstalled) {
+					// Re-bind after colReorder may rewrite headers
+					document.querySelectorAll('#meshdata thead th .col-resize-handle').forEach((el) => el.remove());
+				}
+				resizeHandlesInstalled = true;
+
+				table.columns().every(function(idx) {
+					const th = this.header();
+					if (!th || !this.visible()) return;
+					th.style.position = 'sticky';
+					const handle = document.createElement('span');
+					handle.className = 'col-resize-handle';
+					handle.title = 'Drag to resize · double-click to fit content';
+					handle.addEventListener('mousedown', (e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						const startX = e.clientX;
+						const startWidth = th.getBoundingClientRect().width;
+						handle.classList.add('is-dragging');
+						document.body.classList.add('col-resizing');
+
+						const onMove = (ev) => {
+							const next = Math.max(COL_WIDTH_MIN, startWidth + (ev.clientX - startX));
+							const widths = {};
+							table.columns().every(function(colIdx) {
+								if (!this.visible()) return;
+								if (colIdx === idx) {
+									widths[colIdx] = next;
+									return;
+								}
+								const header = this.header();
+								const w = header ? parseFloat(header.style.width) : NaN;
+								widths[colIdx] = Number.isFinite(w) && w > 0 ? w : measureColumnContentWidth(colIdx);
+							});
+							applyColumnWidths(widths);
+						};
+
+						const onUp = () => {
+							document.removeEventListener('mousemove', onMove);
+							document.removeEventListener('mouseup', onUp);
+							handle.classList.remove('is-dragging');
+							document.body.classList.remove('col-resizing');
+							const finalWidth = th.getBoundingClientRect().width;
+							saveColumnWidth(columnTitle(idx), finalWidth);
+						};
+
+						document.addEventListener('mousemove', onMove);
+						document.addEventListener('mouseup', onUp);
+					});
+					handle.addEventListener('dblclick', (e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						clearSavedColumnWidth(columnTitle(idx));
+						// Fit to true widest cell (no soft cap)
+						layoutColumns({ forceAutofit: true, uncapped: true, onlyIdx: idx });
+					});
+					handle.addEventListener('click', (e) => {
+						e.preventDefault();
+						e.stopPropagation();
+					});
+					th.appendChild(handle);
+				});
+			};
+
+			const loadColumnVisibility = () => {
+				try {
+					const raw = localStorage.getItem(COL_VIS_KEY);
+					if (!raw) return {};
+					const parsed = JSON.parse(raw);
+					return parsed && typeof parsed === 'object' ? parsed : {};
+				} catch (e) {
+					return {};
+				}
+			};
+
+			const saveColumnVisibility = () => {
+				const state = {};
+				table.columns().every(function(idx) {
+					state[columnTitle(idx)] = this.visible();
+				});
+				try {
+					localStorage.setItem(COL_VIS_KEY, JSON.stringify(state));
+				} catch (e) {
+					/* ignore quota / private mode */
+				}
+			};
+
+			const applySavedColumnVisibility = () => {
+				const saved = loadColumnVisibility();
+				table.columns().every(function(idx) {
+					const title = columnTitle(idx);
+					if (Object.prototype.hasOwnProperty.call(saved, title)) {
+						const show = ALWAYS_ON_COLUMNS.has(title) ? true : !!saved[title];
+						this.visible(show, false);
+					}
+				});
+				table.columns.adjust().draw(false);
+			};
+
+			const rebuildColumnsList = () => {
+				if (!columnsList) return;
+				columnsList.innerHTML = '';
+				table.columns().every(function(idx) {
+					const title = columnTitle(idx);
+					const locked = ALWAYS_ON_COLUMNS.has(title);
+					const label = document.createElement('label');
+					const input = document.createElement('input');
+					input.type = 'checkbox';
+					input.checked = this.visible();
+					input.disabled = locked;
+					input.dataset.columnIndex = String(idx);
+					input.setAttribute('aria-label', `Show ${title}`);
+					if (locked) {
+						label.title = 'Required column';
+					}
+					input.addEventListener('change', () => {
+						const colIdx = parseInt(input.dataset.columnIndex, 10);
+						table.column(colIdx).visible(input.checked);
+						saveColumnVisibility();
+						installColumnResizeHandles();
+						scheduleColumnLayout();
+					});
+					label.appendChild(input);
+					label.appendChild(document.createTextNode(title));
+					columnsList.appendChild(label);
+				});
+			};
+
+			const setColumnsPanelOpen = (open) => {
+				if (!columnsPanel || !columnsBtn) return;
+				columnsPanel.classList.toggle('open', open);
+				columnsBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+				if (open) rebuildColumnsList();
+			};
+
+			applySavedColumnVisibility();
+			installColumnResizeHandles();
+			table.on('columns-reordered', function() {
+				installColumnResizeHandles();
+				scheduleColumnLayout();
+			});
+			table.on('draw', function() {
+				// Keep stripe/# index updates; refresh handles if headers were rebuilt
+				if (!document.querySelector('#meshdata thead th .col-resize-handle')) {
+					installColumnResizeHandles();
+				}
+			});
+
+			if (columnsBtn && columnsPanel) {
+				columnsBtn.addEventListener('click', (e) => {
+					e.stopPropagation();
+					setColumnsPanelOpen(!columnsPanel.classList.contains('open'));
+				});
+				columnsPanel.addEventListener('click', (e) => e.stopPropagation());
+				document.addEventListener('click', () => setColumnsPanelOpen(false));
+				document.addEventListener('keydown', (e) => {
+					if (e.key === 'Escape') setColumnsPanelOpen(false);
+				});
+			}
+
+			const columnsShowAll = document.getElementById('columnsShowAll');
+			const columnsHideOptional = document.getElementById('columnsHideOptional');
+			if (columnsShowAll) {
+				columnsShowAll.addEventListener('click', () => {
+					table.columns().visible(true);
+					saveColumnVisibility();
+					rebuildColumnsList();
+					installColumnResizeHandles();
+					scheduleColumnLayout();
+				});
+			}
+			if (columnsHideOptional) {
+				columnsHideOptional.addEventListener('click', () => {
+					table.columns().every(function(idx) {
+						const title = columnTitle(idx);
+						this.visible(ALWAYS_ON_COLUMNS.has(title), false);
+					});
+					table.columns.adjust().draw(false);
+					saveColumnVisibility();
+					rebuildColumnsList();
+					installColumnResizeHandles();
+					scheduleColumnLayout();
+				});
+			}
+
 			// Helper to show/hide custom empty message
 			const updateEmptyMessage = () => {
 				const emptyMsg = document.getElementById('emptyTableMessage');
@@ -973,35 +1447,44 @@
 			table.on('draw', updateEmptyMessage);
 			updateEmptyMessage();
 
-			// Custom export button with CSV functionality
+			// Export currently visible columns only
 			document.getElementById('exportBtn').addEventListener('click', function() {
-				const rows = [];
-				const headers = ['#', 'Name', 'Location', 'IP', 'Description', 'Channel', 'Freq', 'SSID', 'Model', 'Hardware', 'Azimuth', 'Version', 'Tunnels', 'Response', 'Hops', 'Uptime', 'Last Seen'];
-				rows.push(headers.join('\t'));
+				const visibleIdx = [];
+				const headers = [];
+				table.columns().every(function(idx) {
+					if (!this.visible()) return;
+					visibleIdx.push(idx);
+					headers.push(columnTitle(idx));
+				});
+
+				const valueFor = (row, idx, rowIndex) => {
+					switch (idx) {
+						case 0: return rowIndex;
+						case 1: return row.node || '';
+						case 2: return formatLocation(row);
+						case 3: return isBlank(row.wlan_ip) ? '' : row.wlan_ip;
+						case 4: return row.description || '';
+						case 5: return isBlank(row.channel) ? '' : row.channel;
+						case 6: return row.freq || '';
+						case 7: return row.ssid || '';
+						case 8: return row.model || '';
+						case 9: return row.board_id || '';
+						case 10: return formatAzimuth(row.antAzimuth);
+						case 11: return row.firmware_version || '';
+						case 12: return row.active_tunnel_count || '';
+						case 13: return row.response_time_ms ? `${row.response_time_ms} ms` : '';
+						case 14: return row.hopsAway || '';
+						case 15: return isBlank(row.uptime) ? '' : row.uptime;
+						case 16: return formatLastSeen(row.last_seen);
+						default: return '';
+					}
+				};
+
+				const rows = [headers.join('\t')];
 				let rowIndex = 1;
-
 				table.rows({ filter: 'applied' }).data().each(function(row) {
-					const rowData = [
-						rowIndex++,
-						row.node || '',
-						formatLocation(row),
-						isBlank(row.wlan_ip) ? '' : row.wlan_ip,
-						row.description || '',
-						isBlank(row.channel) ? '' : row.channel,
-						row.freq || '',
-						row.ssid || '',
-						row.model || '',
-						row.board_id || '',
-						formatAzimuth(row.antAzimuth),
-						row.firmware_version || '',
-						row.active_tunnel_count || '',
-						row.response_time_ms ? `${row.response_time_ms} ms` : '',
-						row.hopsAway || '',
-						isBlank(row.uptime) ? '' : row.uptime,
-						formatLastSeen(row.last_seen)
-					];
-
-					rows.push(rowData.join('\t'));
+					rows.push(visibleIdx.map((idx) => valueFor(row, idx, rowIndex)).join('\t'));
+					rowIndex++;
 				});
 
 				const csv = rows.join('\n');
