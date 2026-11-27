@@ -572,8 +572,8 @@ class MySQLAdapter:
                         link_info = COALESCE(VALUES(link_info), link_info),
                         node = IF(VALUES(node) IS NOT NULL AND VALUES(node) != ''
                                   AND VALUES(node) != VALUES(wlan_ip), VALUES(node), node),
-                        -- Keep poll time when present; only fill NULL (e.g. after a wipe)
-                        last_seen = COALESCE(last_seen, UTC_TIMESTAMP())
+                        -- Never refresh last_seen here; only successful polls update it
+                        last_seen = last_seen
                 """
                 await cur.execute(sql, (wlan_ip, name, hops_away, link_val))
 
@@ -1072,6 +1072,7 @@ class MeshPollingDaemon:
         self.nodelistNode_ip: Optional[str] = None
         self.initial_link_map: Dict[str, Dict] = {}
         self.cycle_count: int = 0  # Track cycle number for rate limiting
+        self.polled_ips_this_cycle: set = set()  # wlan_ips successfully polled this cycle
         self.base_parallel_threads: int = self.parallel_threads  # Store original setting
         
         # Shutdown handling
@@ -1281,6 +1282,9 @@ class MeshPollingDaemon:
                 f"spread over {self.poller_cycle_minutes} minutes)..."
             )
         polled_nodes = await self._poll_all_nodes(node_devices)
+        self.polled_ips_this_cycle = {
+            n.wlan_ip for n in polled_nodes if getattr(n, 'wlan_ip', None)
+        }
 
         # Step 6: Calculate statistics
         self._calculate_stats(polled_nodes, node_devices)
@@ -2052,6 +2056,7 @@ class MeshPollingDaemon:
                 'mesh_gateway': node.get('mesh_gateway', 'false'),
                 'last_seen': last_seen,
                 'protocol': protocol,
+                'polled_this_cycle': (node.get('wlan_ip') or '') in self.polled_ips_this_cycle,
                 'response_time_ms': int(round(node.get('response_time_ms', 0.0))),
                 'hopsAway': node.get('hopsAway', 1),
             }

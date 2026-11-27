@@ -144,7 +144,8 @@ async def test_upsert_topology_node_preserves_last_seen():
 
     assert cur.execute.await_count == 1
     sql, params = cur.execute.await_args.args
-    assert 'COALESCE(last_seen, UTC_TIMESTAMP())' in sql
+    assert 'last_seen = last_seen' in sql
+    assert 'UTC_TIMESTAMP()' in sql  # set only on INSERT of brand-new rows
     assert params[0] == '10.1.2.3'
     assert params[1] == 'TEST-NODE'
     assert params[2] == 2

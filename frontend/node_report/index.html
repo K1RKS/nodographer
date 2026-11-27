@@ -369,7 +369,7 @@
 			padding: 8px 15px;
 		}
 
-		#firmwareFilter {
+		#nodeFilter {
 			font-family: "Atkinson Hyperlegible Next", sans-serif;
 			font-size: 11px;
 			padding: 6px 12px;
@@ -379,6 +379,24 @@
 			color: var(--text-primary);
 			cursor: pointer;
 			max-width: 100%;
+		}
+
+		.filter-check {
+			display: inline-flex;
+			align-items: center;
+			gap: 6px;
+			font-size: 11px;
+			color: var(--text-primary);
+			cursor: pointer;
+			user-select: none;
+			white-space: nowrap;
+		}
+
+		.filter-check input {
+			margin: 0;
+			width: 14px;
+			height: 14px;
+			cursor: pointer;
 		}
 
 		/* Phone / narrow tablet: keep Back fully on-screen, stack chrome */
@@ -414,14 +432,24 @@
 				width: 100%;
 			}
 
-			#firmwareFilter,
-			#exportBtn {
+			#nodeFilter,
+			#exportBtn,
+			.filter-check {
 				min-height: 44px;
 				font-size: 16px;
 				padding: 8px 12px;
 			}
 
-			#firmwareFilter {
+			.filter-check {
+				align-items: center;
+			}
+
+			.filter-check input {
+				width: 18px;
+				height: 18px;
+			}
+
+			#nodeFilter {
 				flex: 1 1 160px;
 			}
 
@@ -448,12 +476,14 @@
 		<a href="../" class="back-btn">← Back to Map</a>
 		<div class="header-left">
 			<h1 id="pageTitle">Node Report</h1>
-			<select id="firmwareFilter">
-				<option value="" disabled selected hidden>Filter by Routing Protocol</option>
+			<label class="filter-check"
+				title="Stub nodes appear in mesh topology but have not returned full sysinfo yet (model shows as Not Available). They are kept until retention expiry.">
+				<input type="checkbox" id="showStubs" checked>
+				Show Stubs
+			</label>
+			<select id="nodeFilter" title="Missing nodes were not successfully polled on the latest scan">
 				<option value="">All Nodes</option>
-				<option value="combo">Combo</option>
-				<option value="olsr">OLSR Only</option>
-				<option value="babel">Babel Only</option>
+				<option value="missing">Missing Nodes</option>
 			</select>
 			<button id="exportBtn">Export</button>
 		</div>
@@ -499,18 +529,47 @@
 
 	<script>
 		document.addEventListener('DOMContentLoaded', function() {
-			const getProtoParam = () => {
-				const params = new URLSearchParams(window.location.search);
-				const proto = (params.get('proto') || '').toLowerCase();
-				return ['combo', 'olsr', 'babel'].includes(proto) ? proto : '';
+			const isStubNode = (row) => (row.model || '') === 'Not Available';
+
+			const isMissingNode = (row) => {
+				if (typeof row.polled_this_cycle === 'boolean') {
+					return !row.polled_this_cycle;
+				}
+				// Older snapshots without the flag: treat blank/zero response as not polled
+				const ms = Number(row.response_time_ms);
+				return !Number.isFinite(ms) || ms <= 0;
 			};
 
-			const setProtoParam = (value) => {
+			const getFilterParam = () => {
+				const params = new URLSearchParams(window.location.search);
+				const filter = (params.get('filter') || '').toLowerCase();
+				return filter === 'missing' ? 'missing' : '';
+			};
+
+			const setFilterParam = (value) => {
 				const url = new URL(window.location.href);
+				url.searchParams.delete('proto'); // retired protocol filter
 				if (value) {
-					url.searchParams.set('proto', value);
+					url.searchParams.set('filter', value);
 				} else {
-					url.searchParams.delete('proto');
+					url.searchParams.delete('filter');
+				}
+				window.history.replaceState({}, '', url.toString());
+			};
+
+			const getShowStubsParam = () => {
+				const params = new URLSearchParams(window.location.search);
+				const stubs = (params.get('stubs') || '').toLowerCase();
+				// Default ON; only hide when stubs=0|false|off
+				return !(stubs === '0' || stubs === 'false' || stubs === 'off');
+			};
+
+			const setShowStubsParam = (show) => {
+				const url = new URL(window.location.href);
+				if (show) {
+					url.searchParams.delete('stubs');
+				} else {
+					url.searchParams.set('stubs', '0');
 				}
 				window.history.replaceState({}, '', url.toString());
 			};
@@ -650,39 +709,39 @@
 				return b.localeCompare(a);  // reverse the comparison for descending
 			};
 
-			// Set initial firmware filter selection based on proto query param
-			const firmwareFilterEl = document.getElementById('firmwareFilter');
-			const initialProto = getProtoParam();
-			if (firmwareFilterEl) {
-				if (initialProto) {
-					firmwareFilterEl.value = initialProto;
-				} else {
-					firmwareFilterEl.value = '';  // Set to "All Nodes"
-				}
+			const nodeFilterEl = document.getElementById('nodeFilter');
+			const showStubsEl = document.getElementById('showStubs');
+			if (nodeFilterEl) {
+				nodeFilterEl.value = getFilterParam();
+			}
+			if (showStubsEl) {
+				showStubsEl.checked = getShowStubsParam();
 			}
 
 			// Load node data statically
 			let allNodeData = [];
 			
-			// Fetch and filter data based on protocol parameter
+			const applyNodeFilters = (dataset) => {
+				const showStubs = showStubsEl ? showStubsEl.checked : true;
+				const filter = nodeFilterEl ? nodeFilterEl.value : getFilterParam();
+				let rows = Array.isArray(dataset) ? dataset.slice() : [];
+				if (!showStubs) {
+					rows = rows.filter(row => !isStubNode(row));
+				}
+				if (filter === 'missing') {
+					rows = rows.filter(row => isMissingNode(row));
+				}
+				return rows;
+			};
+
+			// Fetch and filter data based on Show Stubs / All|Missing
 			const loadNodeData = async function() {
 				try {
 					await configReady;
 					const response = await fetch(NodographerConfig.dataUrl('node_report_data.json'), { cache: 'no-store' });
 					const json = await response.json();
 					const dataset = Array.isArray(json) ? json : [];
-					const filtered = dataset.filter(row => row.model !== 'Not Available');
-					const proto = getProtoParam();
-					
-					if (proto === 'olsr') {
-						allNodeData = filtered.filter(row => (row.protocol || '').toLowerCase() === 'olsr only');
-					} else if (proto === 'babel') {
-						allNodeData = filtered.filter(row => (row.protocol || '').toLowerCase() === 'babel only');
-					} else if (proto === 'combo') {
-						allNodeData = filtered.filter(row => (row.protocol || '').toLowerCase() === 'combo');
-					} else {
-						allNodeData = filtered;
-					}
+					allNodeData = applyNodeFilters(dataset);
 					
 					// Clear and reload table with new data
 					table.clear().rows.add(allNodeData).draw();
@@ -886,11 +945,15 @@
 				}
 			});
 
-			// Update proto query param and reload table on firmware filter change
-			if (firmwareFilterEl) {
-				firmwareFilterEl.addEventListener('change', function() {
-					const value = this.value;
-					setProtoParam(value);
+			if (nodeFilterEl) {
+				nodeFilterEl.addEventListener('change', function() {
+					setFilterParam(this.value);
+					loadNodeData();
+				});
+			}
+			if (showStubsEl) {
+				showStubsEl.addEventListener('change', function() {
+					setShowStubsParam(this.checked);
 					loadNodeData();
 				});
 			}
